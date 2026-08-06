@@ -16,7 +16,7 @@ import re
 from strands import tool
 
 from agent.browser.kiosk_driver import BrowserError, browser
-from agent.wallet import BudgetExceeded, wallet
+from agent.wallet import BudgetExceeded, rupees, wallet
 
 _MONEY = re.compile(r"[\d,]+(?:\.\d+)?")
 
@@ -55,6 +55,33 @@ def _discount(text: str | None) -> float:
         return 0.0
 
 
+# Everything the kiosk puts a figure in. The DOM is not consistent about it —
+# `data-product-price` is a bare `1250`, a rendered total may already carry its
+# own prefix — so these are parsed back to numbers and written out one way.
+_MONEY_FIELDS = frozenset({"price", "basketTotal", "amountDue", "charged"})
+
+
+def _as_rupees(value):
+    amount = _money(value) if isinstance(value, str) else value
+    return value if amount is None else rupees(amount)
+
+
+def _priced(value):
+    """Rewrite every money field in a driver result as `Rs 1,250`.
+
+    Applied to everything on its way out of `_guarded`, so no screen can hand
+    the agent a bare number to guess the currency of.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _as_rupees(item) if key in _MONEY_FIELDS else _priced(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_priced(item) for item in value]
+    return value
+
+
 def reset() -> None:
     """Forget the previous errand's coupon reservation, and close any browser it
     left open — a stale session would start the next run mid-checkout."""
@@ -71,7 +98,7 @@ def _guarded(action, *args, **kwargs) -> dict:
     """Run a driver call, turning a missing element into advice rather than a
     stack trace — the agent can act on "read the screen", not on a traceback."""
     try:
-        return {"ok": True, **(action(*args, **kwargs) or {})}
+        return {"ok": True, **_priced(action(*args, **kwargs) or {})}
     except BrowserError as exc:
         return _fail(str(exc))
     except Exception as exc:  # Playwright timeouts, closed pages, and friends
@@ -129,7 +156,7 @@ def list_categories() -> dict:
         The category ids and names you can open.
     """
     try:
-        return {"ok": True, "categories": browser.categories()}
+        return {"ok": True, "categories": _priced(browser.categories())}
     except Exception as exc:
         return _fail(f"Could not read the category rail: {exc}")
 
@@ -177,7 +204,7 @@ def add_to_cart(product_id: str, quantity: int = 1, as_meal: bool = False) -> di
         as_meal: Answer yes to the meal upgrade.
 
     Returns:
-        Confirmation and the running basket total.
+        Confirmation and the running basket total, in rupees.
     """
     if quantity < 1:
         return _fail("Quantity must be at least 1.")
@@ -197,7 +224,7 @@ def go_to_checkout() -> dict:
     """Tap Checkout on the basket panel.
 
     Returns:
-        The checkout screen, including the amount due.
+        The checkout screen, including the amount due in rupees.
     """
     return _guarded(browser.go_to_checkout)
 
@@ -211,7 +238,7 @@ def apply_coupon() -> dict:
     Applying only reserves the coupon — it is actually spent when you pay.
 
     Returns:
-        Whether the kiosk accepted it, and the amount now due.
+        Whether the kiosk accepted it, and the amount now due in rupees.
     """
     if not wallet.coupon_code:
         return _fail("No coupon was issued for this errand.")
@@ -238,7 +265,8 @@ def pay(method: str = "card") -> dict:
         method: "card", "wallet" or "counter".
 
     Returns:
-        The order number and what was charged, or the reason it failed.
+        The order number and what was charged in rupees, or the reason it
+        failed.
     """
     if method not in ("card", "wallet", "counter"):
         return _fail("method must be 'card', 'wallet' or 'counter'.")
@@ -285,8 +313,8 @@ def pay(method: str = "card") -> dict:
         "ok": True,
         "paid": True,
         "orderNumber": result.get("orderNumber"),
-        "charged": charged,
-        "wallet": wallet.summary(),
+        "charged": rupees(charged),
+        "wallet": wallet.display(),
     }
 
 

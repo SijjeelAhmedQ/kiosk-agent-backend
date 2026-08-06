@@ -20,6 +20,28 @@ class BudgetExceeded(RuntimeError):
     """Raised when a charge would take the agent past its cash ceiling."""
 
 
+def rupees(amount: float) -> str:
+    """Money as the kiosk writes it: `Rs 1,093`, `Rs 2,500.75`.
+
+    Every figure in this system is already a rupee amount, never paisa — a model
+    shown a bare `1093` reads it as a minor unit and reports "$10.93". So each
+    one that reaches the agent goes through here. Trailing `.00` is dropped: the
+    menu is priced in whole rupees, and "Rs 3,000.00" invites the same misread.
+    """
+    return f"Rs {amount:,.2f}".removesuffix(".00")
+
+
+def money(amount: float | int | None) -> str | None:
+    """`rupees()` for figures that may be absent.
+
+    Coupon balances and discounts come back as None when the restaurant has
+    nothing to say about them, and "Rs None" would be worse than no answer.
+    """
+    if amount is None:
+        return None
+    return rupees(amount)
+
+
 @dataclass
 class Wallet:
     """One errand's worth of spending authority."""
@@ -44,11 +66,11 @@ class Wallet:
         """Would this charge fit? Raises rather than returning a bool so a
         caller cannot forget to look at the answer."""
         if amount < 0:
-            raise BudgetExceeded(f"Refusing a negative charge of {amount}.")
+            raise BudgetExceeded(f"Refusing a negative charge of {rupees(amount)}.")
         if amount > self.remaining + 1e-9:
             raise BudgetExceeded(
-                f"This charge is {amount:.2f} but the wallet has only "
-                f"{self.remaining:.2f} left of its {self.spend_limit:.2f} limit. "
+                f"This charge is {rupees(amount)} but the wallet has only "
+                f"{rupees(self.remaining)} left of its {rupees(self.spend_limit)} limit. "
                 "Remove items or use a coupon that covers more, then try again."
             )
 
@@ -80,12 +102,27 @@ class Wallet:
         self.coupon_redeemed = 0.0
 
     def summary(self) -> dict[str, float | str | None]:
+        """Machine-readable: raw numbers, for the frontend to render itself."""
         return {
             "couponCode": self.coupon_code,
             "couponRedeemed": self.coupon_redeemed,
             "cashLimit": self.spend_limit,
             "cashSpent": self.spent,
             "cashRemaining": self.remaining,
+        }
+
+    def display(self) -> dict[str, str | None]:
+        """The same figures as the agent should read them — `Rs 1,093`.
+
+        Tools hand this back, not `summary()`: a bare `1093` in a tool result is
+        exactly the number a model reports as "$10.93".
+        """
+        return {
+            "couponCode": self.coupon_code,
+            "couponRedeemed": rupees(self.coupon_redeemed),
+            "cashLimit": rupees(self.spend_limit),
+            "cashSpent": rupees(self.spent),
+            "cashRemaining": rupees(self.remaining),
         }
 
 

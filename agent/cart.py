@@ -14,6 +14,8 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 
+from agent.wallet import rupees
+
 
 @dataclass
 class CartLine:
@@ -39,13 +41,14 @@ class CartLine:
         }
 
     def to_view(self) -> dict:
+        """What the agent reads. Prices go out as `Rs 450`, never bare numbers."""
         return {
             "lineId": self.line_id,
             "productId": self.product_id,
             "name": self.name,
             "quantity": self.quantity,
-            "unitPrice": self.unit_price,
-            "lineTotal": self.line_total,
+            "unitPrice": rupees(self.unit_price),
+            "lineTotal": rupees(self.line_total),
             "isMeal": self.is_meal,
         }
 
@@ -118,7 +121,7 @@ class Cart:
         return {
             "lines": [line.to_view() for line in self.lines],
             "itemCount": self.item_count,
-            "estimatedSubtotal": self.subtotal,
+            "estimatedSubtotal": rupees(self.subtotal),
             "note": "Tax and any meal upcharge are added by the restaurant at checkout.",
         }
 

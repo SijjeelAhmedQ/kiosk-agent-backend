@@ -10,6 +10,12 @@ Two rules run through all of them:
   the context window, so they never leave this module.
 * Money is checked in `authorize_payment` against the wallet, not trusted to the
   prompt. See agent/wallet.py.
+
+A third rule, about how money *leaves* here: the API deals in bare numbers, and
+every one of them is already a rupee amount. They are formatted with `rupees()`
+on the way out so the agent reads `Rs 1,093` and never has to decide for itself
+whether `1093` is rupees, paisa or dollars. The raw numbers stay in `_order` and
+the wallet, where the arithmetic happens.
 """
 
 from __future__ import annotations
@@ -21,7 +27,7 @@ from strands import tool
 from agent import kiosk_api
 from agent.cart import cart
 from agent.kiosk_api import KioskApiError
-from agent.wallet import BudgetExceeded, wallet
+from agent.wallet import BudgetExceeded, money, rupees, wallet
 
 # The order placed this run: {orderId, orderNumber, amountDue, ...}. Set by
 # place_order, read by the coupon and payment tools so the agent never has to
@@ -41,7 +47,7 @@ def _slim_product(product: dict) -> dict:
         "productId": product["id"],
         "name": product["name"],
         "description": product.get("description", ""),
-        "price": product["price"],
+        "price": rupees(product["price"]),
         "calories": product.get("calories", 0),
         "categoryId": product.get("categoryId"),
         "isMealEligible": product.get("isMealEligible", False),
@@ -69,7 +75,7 @@ def browse_menu(search: str = "", category_id: str = "") -> dict:
         category_id: Restrict to one category id from list_categories.
 
     Returns:
-        Matching products with their ids, names and prices.
+        Matching products with their ids, names and prices, written as `Rs 450`.
     """
     try:
         if category_id:
@@ -168,7 +174,7 @@ def view_cart() -> dict:
     """Show what is in the cart right now, with an estimated subtotal.
 
     Returns:
-        The cart lines, item count and estimated subtotal.
+        The cart lines, item count and estimated subtotal in rupees.
     """
     return {"ok": True, "cart": cart.to_view()}
 
@@ -201,7 +207,8 @@ def check_coupon() -> dict:
     be changed.
 
     Returns:
-        Whether the coupon is valid, what it would cover, and why not if not.
+        Whether the coupon is valid, what it would cover in rupees, and why not
+        if not.
     """
     if not wallet.coupon_code:
         return _fail("No coupon was issued for this errand — pay with the cash limit instead.")
@@ -226,8 +233,8 @@ def check_coupon() -> dict:
         "valid": result.get("valid", False),
         "reason": result.get("reasonMessage"),
         "couponType": result.get("couponType"),
-        "wouldCover": result.get("applicableAmount", 0),
-        "remainingBalance": result.get("remainingBalance"),
+        "wouldCover": rupees(result.get("applicableAmount") or 0),
+        "remainingBalance": money(result.get("remainingBalance")),
         "matchedProductIds": result.get("matchedProductIds", []),
     }
 
@@ -245,7 +252,8 @@ def place_order(order_type: str = "take_away", payment_method: str = "card") -> 
         payment_method: "card", "wallet" or "counter".
 
     Returns:
-        The order number, its real total, and what is left to pay.
+        The order number, its real total, and what is left to pay — every
+        amount already written as `Rs 1,093`.
     """
     if not cart.lines:
         return _fail("The cart is empty. Add something before placing an order.")
@@ -282,10 +290,10 @@ def place_order(order_type: str = "take_away", payment_method: str = "card") -> 
         "ok": True,
         "orderNumber": placed["orderNumber"],
         "status": placed["status"],
-        "subtotal": summary["subtotal"],
-        "tax": summary["tax"],
-        "total": summary["total"],
-        "amountDue": _order["amountDue"],
+        "subtotal": rupees(summary["subtotal"]),
+        "tax": rupees(summary["tax"]),
+        "total": rupees(summary["total"]),
+        "amountDue": rupees(_order["amountDue"]),
         "next": "Apply the coupon with apply_coupon, then call authorize_payment.",
     }
 
@@ -298,7 +306,7 @@ def apply_coupon() -> dict:
     coupon draws what it can and keeps the rest for next time.
 
     Returns:
-        How much came off and what is still to pay.
+        How much came off and what is still to pay, both in rupees.
     """
     if not _order:
         return _fail("No order has been placed yet — call place_order first.")
@@ -326,11 +334,11 @@ def apply_coupon() -> dict:
 
     return {
         "ok": True,
-        "redeemed": redemption["redeemedAmount"],
+        "redeemed": rupees(redemption["redeemedAmount"]),
         "couponStatus": redemption["status"],
-        "remainingCouponBalance": redemption.get("remainingBalance"),
-        "orderTotal": redemption["orderTotal"],
-        "amountDue": redemption["amountDue"],
+        "remainingCouponBalance": money(redemption.get("remainingBalance")),
+        "orderTotal": rupees(redemption["orderTotal"]),
+        "amountDue": rupees(redemption["amountDue"]),
     }
 
 
@@ -343,7 +351,8 @@ def authorize_payment() -> dict:
     apply the coupon first — do not try to pay again unchanged.
 
     Returns:
-        The approval, the amount charged, and what is left in the wallet.
+        The approval, the amount charged in rupees, and what is left in the
+        wallet.
     """
     if not _order:
         return _fail("No order has been placed yet — call place_order first.")
@@ -376,9 +385,9 @@ def authorize_payment() -> dict:
         "ok": True,
         "approved": True,
         "orderNumber": result["orderNumber"],
-        "charged": charged,
+        "charged": rupees(charged),
         "transactionRef": result.get("transactionRef"),
-        "wallet": wallet.summary(),
+        "wallet": wallet.display(),
     }
 
 
@@ -405,15 +414,19 @@ def get_order(order_number: str = "") -> dict:
         "ok": True,
         "orderNumber": detail["orderNumber"],
         "status": detail["status"],
-        "total": detail["summary"]["total"],
-        "couponDiscount": detail["summary"].get("couponDiscount", 0),
-        "amountDue": detail["summary"].get("amountDue", 0),
+        "total": rupees(detail["summary"]["total"]),
+        "couponDiscount": rupees(detail["summary"].get("couponDiscount") or 0),
+        "amountDue": rupees(detail["summary"].get("amountDue") or 0),
         "items": [
-            {"name": line["name"], "quantity": line["quantity"], "lineTotal": line["lineTotal"]}
+            {
+                "name": line["name"],
+                "quantity": line["quantity"],
+                "lineTotal": rupees(line["lineTotal"]),
+            }
             for line in detail["lines"]
         ],
         "payments": [
-            {"method": p["method"], "status": p["status"], "amount": p["amount"]}
+            {"method": p["method"], "status": p["status"], "amount": rupees(p["amount"])}
             for p in detail.get("payments", [])
         ],
     }

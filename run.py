@@ -142,7 +142,7 @@ def main() -> int:
     if args.quiet:
         print(result)
 
-    spend = wallet.summary()
+    spend = wallet.display()
     print(f"\n{GREEN}{BOLD}Done.{RESET}")
     print(
         f"{DIM}  coupon redeemed : {spend['couponRedeemed']}\n"
