@@ -46,6 +46,12 @@ def credentials_ready() -> tuple[bool, str | None]:
                 "OPENAI_API_KEY is not set. Get a key at "
                 "https://platform.openai.com/api-keys and put it in kiosk-agent/.env."
             )
+    elif settings.provider == "groq":
+        if not os.getenv("GROQ_API_KEY", "").strip():
+            return False, (
+                "GROQ_API_KEY is not set. Get a free key at "
+                "https://console.groq.com/keys and put it in kiosk-agent-backend/.env."
+            )
     elif settings.provider == "ollama":
         # Nothing to check — a local Ollama needs no key. If the daemon is down
         # the first tool call fails with a connection error, which says so.
@@ -53,13 +59,15 @@ def credentials_ready() -> tuple[bool, str | None]:
     else:
         return False, (
             f"Unknown AGENT_PROVIDER {settings.provider!r} — "
-            "expected anthropic, gemini, openai or ollama."
+            "expected anthropic, gemini, openai, groq or ollama."
         )
 
     # A model id left over from another provider is the likeliest mistake when
     # switching, and it fails as an opaque 404 from the vendor. Name it instead.
     # Tuples because OpenAI's reasoning models dropped the gpt- prefix, so that
-    # provider needs several — startswith takes a tuple either way.
+    # provider needs several — startswith takes a tuple either way. Groq is
+    # deliberately absent: it hosts other vendors' open weights, so its ids
+    # share no prefix (openai/gpt-oss-120b, llama-3.3-70b-versatile, qwen/…).
     families: dict[str, tuple[str, ...]] = {
         "anthropic": ("claude",),
         "gemini": ("gemini",),
@@ -104,6 +112,22 @@ def _model():
         # has no equivalent of our xhigh/max, and sending one is a 400.
         return OpenAIModel(
             client_args={"api_key": os.getenv("OPENAI_API_KEY", "").strip()},
+            model_id=settings.model_id,
+            params={"max_completion_tokens": settings.max_tokens},
+        )
+
+    if settings.provider == "groq":
+        from strands.models.openai import OpenAIModel
+
+        # Groq exposes an OpenAI-compatible endpoint, so the OpenAI provider
+        # works verbatim with the base_url moved. `max_completion_tokens` for
+        # the same reason as above, and AGENT_EFFORT is not forwarded — Groq
+        # takes `reasoning_effort` only on some models and 400s on the rest.
+        return OpenAIModel(
+            client_args={
+                "api_key": os.getenv("GROQ_API_KEY", "").strip(),
+                "base_url": settings.groq_base_url,
+            },
             model_id=settings.model_id,
             params={"max_completion_tokens": settings.max_tokens},
         )

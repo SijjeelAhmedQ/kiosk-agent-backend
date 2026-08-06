@@ -28,6 +28,11 @@ _DEFAULT_MODEL: dict[str, str] = {
     "anthropic": "claude-opus-5",
     "gemini": "gemini-2.5-flash",
     "openai": "gpt-5",
+    # Groq serves open-weight models on its own silicon. This is the only one
+    # measured to emit well-formed tool calls every time — llama-3.3-70b has a
+    # bigger token budget but intermittently writes the older `<function=…>`
+    # text form, which Groq rejects mid-run as a fatal 400. See .env.example.
+    "groq": "openai/gpt-oss-120b",
     # Small enough to run on a laptop, and one of the better local tool-callers.
     "ollama": "qwen3:8b",
 }
@@ -45,9 +50,9 @@ class Settings:
     kiosk_id: str = _env("KIOSK_ID", "agent-01")
 
     # --- The brain --------------------------------------------------------- #
-    # anthropic | gemini | openai | ollama. Strands is model-agnostic, so this
-    # is a config choice: gemini has a free tier and ollama runs locally for
-    # nothing, which is what makes a no-cost demo possible.
+    # anthropic | gemini | openai | groq | ollama. Strands is model-agnostic, so
+    # this is a config choice: gemini and groq have free tiers and ollama runs
+    # locally for nothing, which is what makes a no-cost demo possible.
     provider: str = _env("AGENT_PROVIDER", "anthropic").lower()
 
     # Opus 5 is the default because ordering is a multi-step tool-use loop and
@@ -61,6 +66,10 @@ class Settings:
 
     # Where a local Ollama is listening.
     ollama_host: str = _env("OLLAMA_HOST", "http://localhost:11434")
+
+    # Groq speaks the OpenAI wire format, so it is the OpenAI client pointed
+    # somewhere else. Configurable only so a proxy can be slotted in.
+    groq_base_url: str = _env("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
     # low | medium | high | xhigh | max. Ordering is agentic tool-use, which is
     # what `high` is tuned for; `low` is enough for the happy path.

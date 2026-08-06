@@ -74,9 +74,12 @@ python -m venv .venv
 copy .env.example .env
 ```
 
-Then put an Anthropic API key in `.env`. The agent cannot use your Claude Code
-session — it needs its own key from
-[console.anthropic.com](https://console.anthropic.com/settings/keys).
+Then put a key in `.env` — the agent cannot use your Claude Code session, it
+needs its own. `AGENT_PROVIDER` picks which one: `groq` is the free default
+here (a key from [console.groq.com](https://console.groq.com/keys), no card),
+and `anthropic` is the best tool-caller if you have credits at
+[console.anthropic.com](https://console.anthropic.com/settings/keys). `gemini`
+and `ollama` also work; see `.env.example` for all five.
 
 ### 4. Give it something to spend
 

@@ -15,8 +15,10 @@ waits for the first to finish. The UI is told it is queued.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
+import re
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -78,14 +80,36 @@ class Run:
     events: list[dict] = field(default_factory=list)
     final_text: str = ""
     error: str | None = None
-    queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    # One queue per listener, not one per run: a single shared queue means two
+    # tabs steal each other's events, and replaying the backlog to a listener
+    # whose queue already holds it sends everything twice.
+    listeners: list[asyncio.Queue] = field(default_factory=list)
     task: asyncio.Task | None = None
 
     def emit(self, event: dict) -> None:
         """Record and publish. Recording is what lets a browser that reconnects
         (or opens the page late) still see the whole trace."""
         self.events.append(event)
-        self.queue.put_nowait(event)
+        for queue in self.listeners:
+            queue.put_nowait(event)
+
+    def attach(self) -> tuple[list[dict], asyncio.Queue]:
+        """Take the backlog and a live feed in one go.
+
+        Together, and with no `await` between them, is the point: that is what
+        makes "everything so far" and "everything from now on" meet exactly
+        once. Snapshotting and subscribing as two steps is what used to
+        duplicate every event emitted before the UI connected.
+        """
+        queue: asyncio.Queue = asyncio.Queue()
+        self.listeners.append(queue)
+        return list(self.events), queue
+
+    def detach(self, queue: asyncio.Queue) -> None:
+        """Stop feeding a listener that has gone away, so a page left open
+        through a dozen reconnects does not accumulate queues forever."""
+        with suppress(ValueError):
+            self.listeners.remove(queue)
 
 
 _runs: dict[str, Run] = {}
@@ -104,6 +128,36 @@ def _tool_summary(result: Any) -> tuple[bool, str]:
                 return True, f"{key}: {result[key]}"
         return True, "ok"
     return True, str(result)[:200]
+
+
+def _explain(exc: Exception) -> str:
+    """Say what went wrong in a sentence the operator can act on.
+
+    A run dies most often at the provider, not in the tools — a free tier out of
+    tokens, a key with no credit. Those arrive as one useful sentence wrapped in
+    a stringified error body, and putting the whole body on screen buries it.
+    """
+    text = str(exc)
+
+    # OpenAI-compatible clients (Groq included) stringify failures as
+    # "Error code: 429 - {'error': {'message': '…', 'code': '…'}}" — a Python
+    # repr rather than JSON, so json.loads is the wrong tool here.
+    match = re.search(r"Error code: \d+ - (\{.*\})\s*$", text, re.DOTALL)
+    if match:
+        with suppress(Exception):
+            error = ast.literal_eval(match.group(1))["error"]
+            message = error.get("message")
+            if message and error.get("code") == "rate_limit_exceeded":
+                # The limit is per model, so the fix is usually a model id
+                # rather than a wait — worth saying, since it is not obvious.
+                return (
+                    f"{message} This budget is per model: either wait it out, or point "
+                    "AGENT_MODEL at a model that still has room and restart the agent."
+                )
+            if message:
+                return message
+
+    return text
 
 
 def _extract_tool_results(message: dict) -> list[dict]:
@@ -200,8 +254,8 @@ async def _drive(run: Run, payload: StartRunIn) -> None:
             raise
         except Exception as exc:
             run.status = "failed"
-            run.error = str(exc)
-            run.emit({"type": "error", "message": str(exc)})
+            run.error = _explain(exc)
+            run.emit({"type": "error", "message": run.error})
         finally:
             if payload.mode == "browser":
                 with suppress(Exception):
@@ -237,9 +291,19 @@ def health() -> dict:
     }
 
 
+# Spendable first, then the spent ones in the order the picker greys them out.
+# The kiosk computes these, and they are mutually exclusive — a coupon appears
+# under exactly one of them, so this never returns the same code twice.
+_COUPON_STATUSES = ("unused", "partially_redeemed", "fully_redeemed", "expired", "cancelled")
+
+
 @app.get("/api/agent/coupons")
-def spendable_coupons() -> dict:
-    """Coupons the agent could actually spend, for the control panel's picker.
+def coupons() -> dict:
+    """Every coupon the restaurant has, for the control panel's picker.
+
+    Spent, expired and cancelled ones come back too: the picker shows them
+    greyed out with the reason, which answers "why is this code not working?"
+    where hiding them only raises the question.
 
     Proxied rather than fetched from the browser: the kiosk API only allows the
     kiosk's own origin, and widening its CORS so a second app can read it is a
@@ -247,7 +311,7 @@ def spendable_coupons() -> dict:
     address is already configured.
     """
     items: list[dict] = []
-    for status in ("unused", "partially_redeemed"):
+    for status in _COUPON_STATUSES:
         try:
             page = kiosk_api.get("/coupons", status=status, limit=100)
             items.extend(page.get("items", []))
@@ -288,22 +352,26 @@ async def stream_run(run_id: str):
         raise HTTPException(status_code=404, detail="No such run.")
 
     async def publisher():
-        # Replay first: the UI subscribes a beat after POSTing, and without this
-        # the opening events are gone by the time it connects.
-        for event in list(run.events):
-            yield {"data": json.dumps(event)}
-            if event.get("type") == "end":
-                return
+        # Backlog first: the UI subscribes a beat after POSTing, and without
+        # this the opening events are gone by the time it connects.
+        backlog, queue = run.attach()
+        try:
+            for event in backlog:
+                yield {"data": json.dumps(event)}
+                if event.get("type") == "end":
+                    return
 
-        while True:
-            try:
-                event = await asyncio.wait_for(run.queue.get(), timeout=20)
-            except asyncio.TimeoutError:
-                yield {"event": "ping", "data": "{}"}
-                continue
-            yield {"data": json.dumps(event)}
-            if event.get("type") == "end":
-                return
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=20)
+                except asyncio.TimeoutError:
+                    yield {"event": "ping", "data": "{}"}
+                    continue
+                yield {"data": json.dumps(event)}
+                if event.get("type") == "end":
+                    return
+        finally:
+            run.detach(queue)
 
     return EventSourceResponse(publisher())
 
