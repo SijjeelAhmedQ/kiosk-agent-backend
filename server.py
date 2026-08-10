@@ -118,8 +118,50 @@ _runs: dict[str, Run] = {}
 # --------------------------------------------------------------------------- #
 # Turning Strands events into something a UI can render
 # --------------------------------------------------------------------------- #
+# A browse of the whole menu hands back forty products, and the trace shows the
+# first few of any list. The rest is bandwidth spent on something nobody sees.
+_LIST_CAP = 6
+
+
+def _shrink(value: Any) -> Any:
+    """Cut a tool result down to what a timeline row can hold.
+
+    Lists are capped and long strings clipped. The counts a result carries
+    alongside its list (`matched`, `itemCount`) are left alone, so the UI can
+    still say "and 34 more" off a list it only received the head of.
+    """
+    if isinstance(value, dict):
+        return {key: _shrink(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_shrink(item) for item in value[:_LIST_CAP]]
+    if isinstance(value, str):
+        return value[:400]
+    return value
+
+
+def _tool_detail(payload: Any) -> dict | None:
+    """A tool's return value as a dict the UI can read field by field.
+
+    Strands puts tool results on the wire as text, so a tool that returned a
+    dict arrives here as a JSON string. Parsing it back is what lets the trace
+    say "Big Mac® × 1 — Rs 530" rather than printing the JSON at the operator.
+    """
+    if isinstance(payload, str):
+        text = payload.strip()
+        if text.startswith("{"):
+            with suppress(json.JSONDecodeError):
+                payload = json.loads(text)
+    return _shrink(payload) if isinstance(payload, dict) else None
+
+
 def _tool_summary(result: Any) -> tuple[bool, str]:
-    """Boil a tool's return value down to a line of status text."""
+    """Boil a tool's return value down to a line of status text.
+
+    The UI writes its own sentence from `detail` when it recognises the tool, so
+    this is the fallback for anything it does not — and, more importantly, the
+    channel a refusal comes down: the wallet turning a payment away says why
+    here.
+    """
     if isinstance(result, dict):
         if result.get("ok") is False:
             return False, str(result.get("error", "failed"))
@@ -180,10 +222,18 @@ def _extract_tool_results(message: dict) -> list[dict]:
             if "text" in item:
                 payload = item["text"]
                 break
-        ok, summary = _tool_summary(payload)
+        detail = _tool_detail(payload)
+        ok, summary = _tool_summary(detail if detail is not None else payload)
         if result.get("status") == "error":
             ok = False
-        out.append({"toolUseId": result.get("toolUseId"), "ok": ok, "summary": summary})
+        out.append(
+            {
+                "toolUseId": result.get("toolUseId"),
+                "ok": ok,
+                "summary": summary,
+                "detail": detail,
+            }
+        )
     return out
 
 
