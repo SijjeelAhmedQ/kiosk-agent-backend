@@ -75,11 +75,13 @@ copy .env.example .env
 ```
 
 Then put a key in `.env` — the agent cannot use your Claude Code session, it
-needs its own. `AGENT_PROVIDER` picks which one: `groq` is the free default
-here (a key from [console.groq.com](https://console.groq.com/keys), no card),
-and `anthropic` is the best tool-caller if you have credits at
-[console.anthropic.com](https://console.anthropic.com/settings/keys). `gemini`
-and `ollama` also work; see `.env.example` for all five.
+needs its own. `AGENT_PROVIDER` picks which one: `huggingface` is the free
+default here (a token from
+[huggingface.co/settings/tokens](https://huggingface.co/settings/tokens), no
+card, and it needs the *Make calls to Inference Providers* permission), and
+`anthropic` is the best tool-caller if you have credits at
+[console.anthropic.com](https://console.anthropic.com/settings/keys). `groq`,
+`gemini` and `ollama` also work; see `.env.example` for all six.
 
 ### 4. Give it something to spend
 

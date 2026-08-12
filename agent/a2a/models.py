@@ -20,6 +20,7 @@ _KEY_ENV: dict[str, str] = {
     "gemini": "GOOGLE_API_KEY",
     "openai": "OPENAI_API_KEY",
     "groq": "GROQ_API_KEY",
+    "huggingface": "HF_TOKEN",
 }
 
 _WHERE: dict[str, str] = {
@@ -27,11 +28,13 @@ _WHERE: dict[str, str] = {
     "gemini": "https://aistudio.google.com/apikey",
     "openai": "https://platform.openai.com/api-keys",
     "groq": "https://console.groq.com/keys",
+    "huggingface": "https://huggingface.co/settings/tokens",
 }
 
 # A model id left over from another provider is the likeliest mistake when
-# switching, and it fails as an opaque 404 from the vendor. Groq is absent on
-# purpose: it hosts other vendors' open weights, so its ids share no prefix.
+# switching, and it fails as an opaque 404 from the vendor. Groq and huggingface
+# are absent on purpose: they host other vendors' open weights, so their ids
+# share no prefix.
 _FAMILIES: dict[str, tuple[str, ...]] = {
     "anthropic": ("claude",),
     "gemini": ("gemini",),
@@ -60,7 +63,7 @@ def credentials_ready(provider: str, model_id: str, role: str) -> tuple[bool, st
     if env_name is None:
         return False, (
             f"Unknown {variable} {provider!r} — expected anthropic, gemini, "
-            "openai, groq or ollama."
+            "openai, groq, huggingface or ollama."
         )
 
     if not os.getenv(env_name, "").strip():
@@ -99,7 +102,7 @@ def build_model(provider: str, model_id: str, max_tokens: int, effort: str = "hi
             params={"max_output_tokens": max_tokens},
         )
 
-    if provider in ("openai", "groq"):
+    if provider in ("openai", "groq", "huggingface"):
         from strands.models.openai import OpenAIModel
 
         client_args = {
@@ -107,10 +110,13 @@ def build_model(provider: str, model_id: str, max_tokens: int, effort: str = "hi
         }
         if provider == "groq":
             client_args["base_url"] = base.groq_base_url
+        elif provider == "huggingface":
+            client_args["base_url"] = base.hf_base_url
 
-        # Effort is deliberately not forwarded to either: OpenAI's
-        # reasoning_effort has no equivalent of our xhigh/max, and Groq takes it
-        # only on some models and 400s on the rest.
+        # Effort is deliberately not forwarded to any of them: OpenAI's
+        # reasoning_effort has no equivalent of our xhigh/max, Groq takes it
+        # only on some models and 400s on the rest, and on the Hugging Face
+        # router whether it is accepted depends on the backend it picked.
         return OpenAIModel(
             client_args=client_args,
             model_id=model_id,

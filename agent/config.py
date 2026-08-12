@@ -33,6 +33,11 @@ _DEFAULT_MODEL: dict[str, str] = {
     # bigger token budget but intermittently writes the older `<function=…>`
     # text form, which Groq rejects mid-run as a fatal 400. See .env.example.
     "groq": "openai/gpt-oss-120b",
+    # Hugging Face's router fronts many vendors' hardware behind one key, so the
+    # ids are the Hub's own (`org/model`). Same model as the groq default, and
+    # for the same reason — it is the open-weight one that gets tool calls right.
+    # Pin a specific backend by appending it: `openai/gpt-oss-120b:groq`.
+    "huggingface": "openai/gpt-oss-120b",
     # Small enough to run on a laptop, and one of the better local tool-callers.
     "ollama": "qwen3:8b",
 }
@@ -50,9 +55,10 @@ class Settings:
     kiosk_id: str = _env("KIOSK_ID", "agent-01")
 
     # --- The brain --------------------------------------------------------- #
-    # anthropic | gemini | openai | groq | ollama. Strands is model-agnostic, so
-    # this is a config choice: gemini and groq have free tiers and ollama runs
-    # locally for nothing, which is what makes a no-cost demo possible.
+    # anthropic | gemini | openai | groq | huggingface | ollama. Strands is
+    # model-agnostic, so this is a config choice: gemini, groq and huggingface
+    # have free tiers and ollama runs locally for nothing, which is what makes a
+    # no-cost demo possible.
     provider: str = _env("AGENT_PROVIDER", "anthropic").lower()
 
     # Opus 5 is the default because ordering is a multi-step tool-use loop and
@@ -70,6 +76,10 @@ class Settings:
     # Groq speaks the OpenAI wire format, so it is the OpenAI client pointed
     # somewhere else. Configurable only so a proxy can be slotted in.
     groq_base_url: str = _env("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+
+    # Hugging Face's Inference Providers router is OpenAI-compatible too, so it
+    # is the same client again with a third base URL.
+    hf_base_url: str = _env("HF_BASE_URL", "https://router.huggingface.co/v1")
 
     # low | medium | high | xhigh | max. Ordering is agentic tool-use, which is
     # what `high` is tuned for; `low` is enough for the happy path.

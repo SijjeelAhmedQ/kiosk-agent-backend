@@ -52,6 +52,14 @@ def credentials_ready() -> tuple[bool, str | None]:
                 "GROQ_API_KEY is not set. Get a free key at "
                 "https://console.groq.com/keys and put it in kiosk-agent-backend/.env."
             )
+    elif settings.provider == "huggingface":
+        if not os.getenv("HF_TOKEN", "").strip():
+            return False, (
+                "HF_TOKEN is not set. Get a free token at "
+                "https://huggingface.co/settings/tokens (it needs the "
+                "'Make calls to Inference Providers' permission) and put it in "
+                "kiosk-agent-backend/.env."
+            )
     elif settings.provider == "ollama":
         # Nothing to check — a local Ollama needs no key. If the daemon is down
         # the first tool call fails with a connection error, which says so.
@@ -59,7 +67,7 @@ def credentials_ready() -> tuple[bool, str | None]:
     else:
         return False, (
             f"Unknown AGENT_PROVIDER {settings.provider!r} — "
-            "expected anthropic, gemini, openai, groq or ollama."
+            "expected anthropic, gemini, openai, groq, huggingface or ollama."
         )
 
     # A model id left over from another provider is the likeliest mistake when
@@ -67,7 +75,8 @@ def credentials_ready() -> tuple[bool, str | None]:
     # Tuples because OpenAI's reasoning models dropped the gpt- prefix, so that
     # provider needs several — startswith takes a tuple either way. Groq is
     # deliberately absent: it hosts other vendors' open weights, so its ids
-    # share no prefix (openai/gpt-oss-120b, llama-3.3-70b-versatile, qwen/…).
+    # share no prefix (openai/gpt-oss-120b, llama-3.3-70b-versatile, qwen/…) —
+    # and huggingface is absent for the same reason.
     families: dict[str, tuple[str, ...]] = {
         "anthropic": ("claude",),
         "gemini": ("gemini",),
@@ -127,6 +136,24 @@ def _model():
             client_args={
                 "api_key": os.getenv("GROQ_API_KEY", "").strip(),
                 "base_url": settings.groq_base_url,
+            },
+            model_id=settings.model_id,
+            params={"max_completion_tokens": settings.max_tokens},
+        )
+
+    if settings.provider == "huggingface":
+        from strands.models.openai import OpenAIModel
+
+        # Hugging Face's Inference Providers router is OpenAI-compatible, so
+        # this is the groq branch again with a different base URL and key. The
+        # router picks a backend for the model id unless one is pinned with a
+        # `:provider` suffix. AGENT_EFFORT is not forwarded: whether it is
+        # accepted depends on whichever backend the router chose, so sending it
+        # turns a working config into an intermittent 400.
+        return OpenAIModel(
+            client_args={
+                "api_key": os.getenv("HF_TOKEN", "").strip(),
+                "base_url": settings.hf_base_url,
             },
             model_id=settings.model_id,
             params={"max_completion_tokens": settings.max_tokens},
