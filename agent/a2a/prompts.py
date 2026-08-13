@@ -80,7 +80,7 @@ MERCHANT_AT_THE_SCREEN = """\
 
 # You are working the touchscreen, not an API
 
-You are standing at the kiosk, tapping it, exactly as a member of staff would.
+You are standing at Friends Kitchen, tapping it, exactly as a member of staff would.
 Read the screen before acting on it: it changes after every tap, and a product
 card you saw a moment ago may be gone. If a tap does not do what you expected,
 look again rather than repeating it.

@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from agent import kiosk_api
+from agent import friends_kitchen_api
 from agent.config import settings
 from agent.tools import api_tools, browser_tools
 from agent.wallet import wallet
@@ -37,16 +37,16 @@ from agent.wallet import wallet
 app = FastAPI(
     title="Friends Kitchen Ordering Agent",
     version="1.0.0",
-    description="Runs the ordering agent and streams its progress to the kiosk UI.",
+    description="Runs the ordering agent and streams its progress to the Friends Kitchen UI.",
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        # The agent's own control panel (kiosk-agent-ui).
+        # The agent's own control panel (friends-kitchen-agent-frontend).
         "http://localhost:5174",
         "http://127.0.0.1:5174",
-        # The kiosk itself, so it could embed a status widget later.
+        # Friends Kitchen itself, so it could embed a status widget later.
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
@@ -249,14 +249,14 @@ async def _drive(run: Run, payload: StartRunIn) -> None:
         browser_tools.reset()
 
         try:
-            from agent.kiosk_agent import build_agent
+            from agent.friends_kitchen_agent import build_agent
 
             agent = build_agent(wallet, mode=payload.mode, callback_handler=None)
 
             if payload.mode == "browser":
                 # Launch before the model starts so a failure here is reported
                 # as "could not open the browser", not as a confusing tool error.
-                from agent.browser.kiosk_driver import browser
+                from agent.browser.friends_kitchen_driver import browser
 
                 await asyncio.to_thread(browser.start, payload.headless, 250)
                 run.emit({"type": "browser", "state": "opened", "headless": payload.headless})
@@ -320,7 +320,7 @@ async def _drive(run: Run, payload: StartRunIn) -> None:
 @app.get("/api/agent/health")
 def health() -> dict:
     """Everything the UI needs to tell the operator what is not ready."""
-    from agent.kiosk_agent import credentials_ready
+    from agent.friends_kitchen_agent import credentials_ready
 
     ready, problem = credentials_ready()
 
@@ -328,21 +328,21 @@ def health() -> dict:
         "success": True,
         "data": {
             "agent": "ok",
-            "restaurantApi": kiosk_api.health(),
+            "restaurantApi": friends_kitchen_api.health(),
             # Named for the provider-agnostic question the UI actually asks:
             # "can this thing run?" A local Ollama needs no key and is ready.
             "hasApiKey": ready,
             "credentialProblem": problem,
             "provider": settings.provider,
             "model": settings.model_id,
-            "kioskWeb": settings.web_base,
+            "friendsKitchenWeb": settings.web_base,
             "busy": _run_lock.locked(),
         },
     }
 
 
 # Spendable first, then the spent ones in the order the picker greys them out.
-# The kiosk computes these, and they are mutually exclusive — a coupon appears
+# Friends Kitchen computes these, and they are mutually exclusive — a coupon appears
 # under exactly one of them, so this never returns the same code twice.
 _COUPON_STATUSES = ("unused", "partially_redeemed", "fully_redeemed", "expired", "cancelled")
 
@@ -355,15 +355,15 @@ def coupons() -> dict:
     greyed out with the reason, which answers "why is this code not working?"
     where hiding them only raises the question.
 
-    Proxied rather than fetched from the browser: the kiosk API only allows the
-    kiosk's own origin, and widening its CORS so a second app can read it is a
+    Proxied rather than fetched from the browser: the Friends Kitchen API only allows the
+    Friends Kitchen's own origin, and widening its CORS so a second app can read it is a
     bigger change than forwarding one read from here — where the restaurant's
     address is already configured.
     """
     items: list[dict] = []
     for status in _COUPON_STATUSES:
         try:
-            page = kiosk_api.get("/coupons", status=status, limit=100)
+            page = friends_kitchen_api.get("/coupons", status=status, limit=100)
             items.extend(page.get("items", []))
         except Exception:
             # A missing picker is a nuisance; a 500 here would block the page.

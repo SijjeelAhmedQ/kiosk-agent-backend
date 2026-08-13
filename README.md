@@ -11,8 +11,8 @@ There are two ways to drive it — a control panel, or the command line.
 .venv\Scripts\python -m uvicorn server:app --port 8100
 ```
 
-…and `npm run dev` in **`kiosk-agent-ui`** (port 5174). Write the errand, pick a
-coupon, watch the agent work. See [that app's README](../kiosk-agent-ui/README.md).
+…and `npm run dev` in **`friends-kitchen-agent-frontend`** (port 5174). Write the errand, pick a
+coupon, watch the agent work. See [that app's README](../friends-kitchen-agent-frontend/README.md).
 
 **The CLI**, for scripting and quick checks:
 
@@ -20,7 +20,7 @@ coupon, watch the agent work. See [that app's README](../kiosk-agent-ui/README.m
 python run.py "Order two cheeseburgers" --coupon AGENT-8247EA9611 --limit 3000
 ```
 
-It is a separate application from the kiosk. It has its own process, its own
+It is a separate application from Friends Kitchen. It has its own process, its own
 virtualenv, and its own Anthropic API key, and it talks to the restaurant the
 same way a customer would — over the public API, or by driving the actual
 website in a real browser.
@@ -53,10 +53,10 @@ it has to deal with rather than an overspend nobody noticed.
 ### 1. The restaurant must be running
 
 ```bash
-# Backend — from kiosk-backend/
+# Backend — from friends-kitchen-backend/
 .venv\Scripts\python -m uvicorn app.main:app --port 8000
 
-# Frontend — from kiosk-frontend/, only needed for --mode browser
+# Frontend — from friends-kitchen-frontend/, only needed for --mode browser
 npm run dev
 ```
 
@@ -85,7 +85,7 @@ card, and it needs the *Make calls to Inference Providers* permission), and
 
 ### 4. Give it something to spend
 
-Any coupon from the kiosk's own admin screens works. To mint one from the
+Any coupon from Friends Kitchen's own admin screens works. To mint one from the
 command line, pick a running campaign and generate against it:
 
 ```bash
@@ -133,7 +133,7 @@ agent-commerce looks like: machines talking to machines.
 
 ### `--mode browser`
 
-Tools drive the React kiosk in Chromium via Playwright — tapping the welcome
+Tools drive the React Friends Kitchen in Chromium via Playwright — tapping the welcome
 screen, typing in the search box, opening a product, answering "Make it a
 meal?", typing the coupon into the coupon field, and pressing Pay. Nothing
 touches the API directly.
@@ -143,7 +143,7 @@ it proves the point the brief actually made: *the agent goes to your website and
 uses it.*
 
 The browser tools are semantic (`search_menu`, `add_to_cart`, `pay`) rather than
-pixel-level. The model decides *what* to do; `agent/browser/kiosk_driver.py`
+pixel-level. The model decides *what* to do; `agent/browser/friends_kitchen_driver.py`
 knows *where* things are, keyed off `data-testid` attributes in the frontend.
 That keeps runs reproducible — a restyle cannot break the agent, only a
 deliberate change to those hooks can.
@@ -159,14 +159,14 @@ agent/
   config.py                  Environment-driven settings
   wallet.py                  The token and the cash ceiling. Enforced, not suggested.
   prompts.py                 The brief the agent is given
-  kiosk_agent.py             Strands Agent + Anthropic model assembly
-  kiosk_api.py               HTTP client for the kiosk API
+  friends_kitchen_agent.py             Strands Agent + Anthropic model assembly
+  friends_kitchen_api.py               HTTP client for the Friends Kitchen API
   cart.py                    Client-side cart (the API has no cart endpoint)
   tools/
     api_tools.py             Ordering via REST
     browser_tools.py         Ordering via the website
   browser/
-    kiosk_driver.py          Playwright page-object for the kiosk UI
+    friends_kitchen_driver.py          Playwright page-object for the Friends Kitchen UI
 ```
 
 **Framework.** [Strands Agents](https://strandsagents.com) — AWS's open-source
@@ -194,7 +194,7 @@ These are enforced in code, not asked for in the prompt:
 - **The agent cannot invent product ids.** Ids are server-generated; the tools
   reject unknown ones and point it back at the menu.
 - **Agent orders are identifiable.** Every order and redemption carries
-  `X-Kiosk-Id: agent-01` (configurable), so the admin screens can tell agent
+  `X-Terminal-Id: agent-01` (configurable), so the admin screens can tell agent
   traffic from walk-in traffic.
 
 ---
@@ -220,15 +220,15 @@ through the other's UI.
 
 Strands ships both protocols needed for that:
 
-- **MCP** — expose `kiosk-backend` as an MCP server (menu, cart, coupons,
+- **MCP** — expose `friends-kitchen-backend` as an MCP server (menu, cart, coupons,
   orders as MCP tools). Any MCP-capable agent could then order without knowing
   anything about Friends Kitchen's HTTP API. This is the smaller step, and it
   mostly means re-hosting `agent/tools/api_tools.py` behind an MCP server.
-- **A2A** — give the kiosk its own agent card and let this agent discover and
+- **A2A** — give Friends Kitchen its own agent card and let this agent discover and
   negotiate with it: *"here is my budget and my dietary constraints, what can
   you do?"* That is where the coupon stops being a code typed into a box and
   starts being a credential presented between agents.
 
 Neither changes the shape of what is here: the wallet stays the boundary, and
 the tools stay the vocabulary.
-"# kiosk-agent-backend" 
+"# friends-kitchen-agent-backend" 

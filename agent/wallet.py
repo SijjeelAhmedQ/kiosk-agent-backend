@@ -21,7 +21,7 @@ class BudgetExceeded(RuntimeError):
 
 
 def rupees(amount: float) -> str:
-    """Money as the kiosk writes it: `Rs 1,093`, `Rs 2,500.75`.
+    """Money as Friends Kitchen writes it: `Rs 1,093`, `Rs 2,500.75`.
 
     Every figure in this system is already a rupee amount, never paisa — a model
     shown a bare `1093` reads it as a minor unit and reports "$10.93". So each

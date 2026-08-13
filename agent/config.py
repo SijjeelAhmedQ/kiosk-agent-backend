@@ -1,7 +1,7 @@
 """Settings for the ordering agent.
 
 Everything here is environment-driven so the same agent binary can be pointed at
-a local kiosk, a staging one, or a colleague's machine without a code change.
+a local Friends Kitchen, a staging one, or a colleague's machine without a code change.
 See .env.example for the full list.
 """
 
@@ -23,7 +23,7 @@ def _env(name: str, default: str) -> str:
 
 # A sensible model per provider, so switching providers is one variable rather
 # than two. `.get` rather than `[]`: an unknown provider should reach the
-# readable error in kiosk_agent.credentials_ready(), not die on a KeyError here.
+# readable error in friends_kitchen_agent.credentials_ready(), not die on a KeyError here.
 _DEFAULT_MODEL: dict[str, str] = {
     "anthropic": "claude-opus-5",
     "gemini": "gemini-2.5-flash",
@@ -50,9 +50,9 @@ def _default_model_for(provider: str) -> str:
 @dataclass(frozen=True)
 class Settings:
     # --- The restaurant ---------------------------------------------------- #
-    api_base: str = _env("KIOSK_API_BASE", "http://localhost:8000/api/v1")
-    web_base: str = _env("KIOSK_WEB_BASE", "http://localhost:5173")
-    kiosk_id: str = _env("KIOSK_ID", "agent-01")
+    api_base: str = _env("FK_API_BASE", "http://localhost:8000/api/v1")
+    web_base: str = _env("FK_WEB_BASE", "http://localhost:5173")
+    terminal_id: str = _env("FK_TERMINAL_ID", "agent-01")
 
     # --- The brain --------------------------------------------------------- #
     # anthropic | gemini | openai | groq | huggingface | ollama. Strands is
@@ -86,7 +86,7 @@ class Settings:
     effort: str = _env("AGENT_EFFORT", "high")
 
     # --- Limits ------------------------------------------------------------ #
-    http_timeout: float = float(_env("KIOSK_HTTP_TIMEOUT", "20"))
+    http_timeout: float = float(_env("FK_HTTP_TIMEOUT", "20"))
     max_agent_steps: int = int(_env("AGENT_MAX_STEPS", "40"))
 
 

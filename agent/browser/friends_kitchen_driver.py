@@ -1,4 +1,4 @@
-"""Driving the kiosk's actual website in Chromium.
+"""Driving Friends Kitchen's actual website in Chromium.
 
 Two things shape this module.
 
@@ -13,7 +13,7 @@ this product", "pay" — the things a customer does — rather than raw coordina
 That keeps the browser toolset the same shape as the API toolset, and it keeps
 the model out of the business of guessing where a button rendered.
 
-Selectors are `data-testid` attributes added to the kiosk frontend. They are a
+Selectors are `data-testid` attributes added to the Friends Kitchen front end. They are a
 deliberate contract: styling can change freely, these cannot.
 """
 
@@ -41,7 +41,7 @@ class _BrowserThread(threading.Thread):
     """Owns the Playwright instance and executes every call in one place."""
 
     def __init__(self) -> None:
-        super().__init__(daemon=True, name="kiosk-browser")
+        super().__init__(daemon=True, name="Friends Kitchen-browser")
         self._jobs: queue.Queue[tuple[Callable[[], Any], Future] | None] = queue.Queue()
         self._ready = threading.Event()
         self.playwright = None
@@ -74,8 +74,8 @@ class _BrowserThread(threading.Thread):
             self.join(timeout=5)
 
 
-class KioskBrowser:
-    """The kiosk website, as a set of things a customer can do."""
+class FriendsKitchenBrowser:
+    """The Friends Kitchen site, as a set of things a customer can do."""
 
     def __init__(self) -> None:
         self._thread = _BrowserThread()
@@ -87,7 +87,7 @@ class KioskBrowser:
     # Lifecycle
     # ----------------------------------------------------------------- #
     def start(self, headless: bool = False, slow_mo: int = 250) -> str:
-        """Open the browser at the kiosk's front screen.
+        """Open the browser at Friends Kitchen's front screen.
 
         `slow_mo` is deliberately non-zero by default: this gets demoed to
         people, and a run that completes in 400ms looks like nothing happened.
@@ -391,4 +391,4 @@ class KioskBrowser:
         }
 
 
-browser = KioskBrowser()
+browser = FriendsKitchenBrowser()

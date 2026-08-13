@@ -28,7 +28,7 @@ from typing import Any
 
 from strands import tool
 
-from agent import kiosk_api
+from agent import friends_kitchen_api
 from agent.a2a.merchant_client import MerchantConnection, MerchantRefused, MerchantUnreachable
 from agent.a2a.protocol import (
     QUOTE,
@@ -39,7 +39,7 @@ from agent.a2a.protocol import (
     parts_text,
 )
 from agent.a2a.tasks import ConsoleRun
-from agent.kiosk_api import KioskApiError
+from agent.friends_kitchen_api import FriendsKitchenApiError
 from agent.wallet import BudgetExceeded, Wallet, rupees
 
 
@@ -437,8 +437,8 @@ def build_tools(session: BuyerSession) -> list:
             return _fail("No receipt to verify — nothing has been paid for yet.")
 
         try:
-            detail = await asyncio.to_thread(kiosk_api.get, f"/orders/number/{number}")
-        except KioskApiError as exc:
+            detail = await asyncio.to_thread(friends_kitchen_api.get, f"/orders/number/{number}")
+        except FriendsKitchenApiError as exc:
             return _fail(f"Could not check with the restaurant: {exc}")
 
         summary = detail.get("summary", {})

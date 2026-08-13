@@ -17,7 +17,7 @@ for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, "reconfigure"):
         stream.reconfigure(encoding="utf-8", errors="replace")
 
-from agent import kiosk_api  # noqa: E402  (after the stream fix, deliberately)
+from agent import friends_kitchen_api  # noqa: E402  (after the stream fix, deliberately)
 from agent.config import settings
 from agent.wallet import wallet
 
@@ -57,7 +57,7 @@ def make_printer():
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="kiosk-agent",
+        prog="friends-kitchen-agent-backend",
         description="An AI agent that orders food at Friends Kitchen on your behalf.",
     )
     parser.add_argument("instruction", help="What to order, in plain language.")
@@ -96,17 +96,17 @@ def main() -> int:
         )
         return 2
 
-    if not kiosk_api.health():
+    if not friends_kitchen_api.health():
         print(
             f"{RED}Friends Kitchen is not answering at {settings.api_base}.{RESET}\n"
             "Start the backend first:\n"
-            "  cd ../kiosk-backend && .venv\\Scripts\\python -m uvicorn app.main:app --port 8000",
+            "  cd ../friends-kitchen-backend && .venv\\Scripts\\python -m uvicorn app.main:app --port 8000",
             file=sys.stderr,
         )
         return 1
 
     # Imported here so a missing API key is reported after the cheaper checks.
-    from agent.kiosk_agent import MissingApiKey, build_agent
+    from agent.friends_kitchen_agent import MissingApiKey, build_agent
 
     try:
         agent = build_agent(
@@ -133,7 +133,7 @@ def main() -> int:
         return 1
     finally:
         if args.mode == "browser":
-            from agent.browser.kiosk_driver import browser
+            from agent.browser.friends_kitchen_driver import browser
 
             if browser.started:
                 input(f"\n{DIM}Press Enter to close the browser…{RESET}")

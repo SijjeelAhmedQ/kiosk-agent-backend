@@ -31,7 +31,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
-from agent import kiosk_api
+from agent import friends_kitchen_api
 from agent.a2a import tasks as store
 from agent.a2a.buyer_agent import run_errand
 from agent.a2a.config import a2a_settings
@@ -66,7 +66,7 @@ app.add_middleware(
         # The A2A console, served alongside the errand UI at /a2a.html.
         "http://localhost:5174",
         "http://127.0.0.1:5174",
-        # The kiosk, so it could show a negotiation later without a CORS change.
+        # Friends Kitchen, so it could show a negotiation later without a CORS change.
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
@@ -113,7 +113,7 @@ def health() -> dict:
     return _ok(
         {
             "a2a": "ok",
-            "restaurantApi": kiosk_api.health(),
+            "restaurantApi": friends_kitchen_api.health(),
             "buyer": {
                 "provider": a2a_settings.buyer_provider,
                 "model": a2a_settings.buyer_model,
@@ -133,7 +133,7 @@ def health() -> dict:
 
 
 # Spendable first, then the spent ones in the order the picker greys them out.
-# The kiosk computes these and they are mutually exclusive, so a coupon appears
+# Friends Kitchen computes these and they are mutually exclusive, so a coupon appears
 # under exactly one — this never returns the same code twice.
 _COUPON_STATUSES = ("unused", "partially_redeemed", "fully_redeemed", "expired", "cancelled")
 
@@ -142,15 +142,15 @@ _COUPON_STATUSES = ("unused", "partially_redeemed", "fully_redeemed", "expired",
 def coupons() -> dict:
     """Every coupon the restaurant has, for the console's picker.
 
-    Proxied rather than fetched from the browser, because the kiosk API allows
-    only the kiosk's own origin. The errand service on 8100 forwards this same
+    Proxied rather than fetched from the browser, because the Friends Kitchen API allows
+    only Friends Kitchen's own origin. The errand service on 8100 forwards this same
     read for its own console; this service does its own so that the A2A console
     works whether or not 8100 is running.
     """
     items: list[dict] = []
     for status in _COUPON_STATUSES:
         try:
-            page = kiosk_api.get("/coupons", status=status, limit=100)
+            page = friends_kitchen_api.get("/coupons", status=status, limit=100)
             items.extend(page.get("items", []))
         except Exception:  # noqa: BLE001 — a missing picker is a nuisance, a 500 is a wall
             continue
@@ -276,7 +276,7 @@ async def _drive(run: ConsoleRun, payload: StartRunIn) -> None:
             # browser that has already died must not turn a finished run into a
             # failed one.
             with suppress(Exception):
-                from agent.browser.kiosk_driver import browser
+                from agent.browser.friends_kitchen_driver import browser
 
                 await asyncio.to_thread(browser.close)
             run.stream.emit({"type": "browser", "state": "closed"})

@@ -14,7 +14,7 @@ import httpx
 from agent.config import settings
 
 
-class KioskApiError(RuntimeError):
+class FriendsKitchenApiError(RuntimeError):
     """A refusal from the restaurant, in words the agent can act on."""
 
     def __init__(self, message: str, code: str | None = None, status: int | None = None):
@@ -26,7 +26,7 @@ class KioskApiError(RuntimeError):
 _client = httpx.Client(
     base_url=settings.api_base,
     timeout=settings.http_timeout,
-    headers={"X-Kiosk-Id": settings.kiosk_id},
+    headers={"X-Terminal-Id": settings.terminal_id},
 )
 
 
@@ -34,13 +34,13 @@ def _unwrap(response: httpx.Response) -> Any:
     try:
         payload = response.json()
     except ValueError:
-        raise KioskApiError(
+        raise FriendsKitchenApiError(
             f"The restaurant returned {response.status_code} with a non-JSON body.",
             status=response.status_code,
         ) from None
 
     if not payload.get("success", False):
-        raise KioskApiError(
+        raise FriendsKitchenApiError(
             payload.get("message") or f"Request failed with {response.status_code}.",
             code=payload.get("code"),
             status=response.status_code,

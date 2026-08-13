@@ -7,11 +7,11 @@ strands-agents[anthropic,gemini,openai,ollama]>=1.50.0
 # Talking to the Friends Kitchen API.
 httpx>=0.28
 
-# Driving the kiosk website in --mode browser.
+# Driving the Friends Kitchen site in --mode browser.
 # After installing, fetch the browser itself:  python -m playwright install chromium
 playwright>=1.49
 
-# server.py — the HTTP front door the control-panel UI (kiosk-agent-ui) drives.
+# server.py — the HTTP front door the control-panel UI (friends-kitchen-agent-frontend) drives.
 fastapi>=0.115
 uvicorn[standard]>=0.30
 sse-starlette>=2.1

@@ -1,13 +1,13 @@
 """Building a model client for one named provider.
 
-`agent.kiosk_agent._model()` does this already and cannot be reused: it reads
+`agent.friends_kitchen_agent._model()` does this already and cannot be reused: it reads
 the process-wide `settings` singleton, so it can only ever build the *one* model
 the errand flow is configured for. A2A has two agents and wants them on
 different providers — that is the whole point of splitting the keys — so the
 same logic is repeated here with the provider and model passed in.
 
 The duplication is real and deliberate. The alternative is threading arguments
-through `kiosk_agent`, which is a change to the flow this package promised not
+through `friends_kitchen_agent`, which is a change to the flow this package promised not
 to touch.
 """
 
@@ -70,7 +70,7 @@ def credentials_ready(provider: str, model_id: str, role: str) -> tuple[bool, st
         return False, (
             f"{env_name} is not set, and the {role} agent is configured for "
             f"{provider}. Get a key at {_WHERE[provider]} and put it in "
-            "kiosk-agent-backend/.env."
+            "friends-kitchen-agent-backend/.env."
         )
 
     expected = _FAMILIES.get(provider)
@@ -86,7 +86,7 @@ def credentials_ready(provider: str, model_id: str, role: str) -> tuple[bool, st
 def build_model(provider: str, model_id: str, max_tokens: int, effort: str = "high"):
     """A Strands model client for `provider`.
 
-    Every branch mirrors `kiosk_agent._model()`, including the awkward bits:
+    Every branch mirrors `friends_kitchen_agent._model()`, including the awkward bits:
     OpenAI's reasoning models reject `max_tokens` and want
     `max_completion_tokens`; Groq is the OpenAI client with the base URL moved;
     Ollama takes `max_tokens` directly rather than through `params`.

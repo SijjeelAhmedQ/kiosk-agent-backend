@@ -30,11 +30,11 @@ from typing import Any
 
 from strands import tool
 
-from agent import kiosk_api
+from agent import friends_kitchen_api
 from agent.a2a.protocol import QUOTE, RECEIPT, Artifact, event_artifact
 from agent.a2a.tasks import MerchantTask
 from agent.cart import Cart
-from agent.kiosk_api import KioskApiError
+from agent.friends_kitchen_api import FriendsKitchenApiError
 from agent.wallet import money, rupees
 
 
@@ -61,11 +61,11 @@ class MerchantSession:
 
 
 async def _get(path: str, **params: Any) -> Any:
-    return await asyncio.to_thread(kiosk_api.get, path, **params)
+    return await asyncio.to_thread(friends_kitchen_api.get, path, **params)
 
 
 async def _post(path: str, body: dict[str, Any]) -> Any:
-    return await asyncio.to_thread(kiosk_api.post, path, body)
+    return await asyncio.to_thread(friends_kitchen_api.post, path, body)
 
 
 def _fail(message: str) -> dict:
@@ -111,7 +111,7 @@ async def _tax_rate(session: MerchantSession) -> float:
         try:
             settings = await _get("/settings")
             session.tax_rate = float(settings.get("TaxRate", 0) or 0)
-        except (KioskApiError, TypeError, ValueError):
+        except (FriendsKitchenApiError, TypeError, ValueError):
             session.tax_rate = 0.0
     return session.tax_rate
 
@@ -131,7 +131,7 @@ def build_tools(session: MerchantSession) -> list:
         """
         try:
             categories = await _get("/categories")
-        except KioskApiError as exc:
+        except FriendsKitchenApiError as exc:
             return _fail(str(exc))
         return {
             "ok": True,
@@ -156,7 +156,7 @@ def build_tools(session: MerchantSession) -> list:
             products = await (
                 _get(f"/categories/{category_id}/products") if category_id else _get("/products")
             )
-        except KioskApiError as exc:
+        except FriendsKitchenApiError as exc:
             return _fail(str(exc))
 
         items = [_slim(p) for p in products]
@@ -202,7 +202,7 @@ def build_tools(session: MerchantSession) -> list:
 
         try:
             product = await _get(f"/products/{product_id}")
-        except KioskApiError as exc:
+        except FriendsKitchenApiError as exc:
             return _fail(
                 f"{exc} Call browse_menu for a valid product id — ids are not product names."
             )
@@ -340,7 +340,7 @@ def build_tools(session: MerchantSession) -> list:
                     "cartLines": session.cart.to_coupon_lines(),
                 },
             )
-        except KioskApiError as exc:
+        except FriendsKitchenApiError as exc:
             return _fail(str(exc))
 
         session.coupon_code = coupon_code.strip()
@@ -380,7 +380,7 @@ def build_tools(session: MerchantSession) -> list:
                 "/coupons/redeem",
                 {"couponCode": code, "orderId": session.order["orderId"], "allowPartial": True},
             )
-        except KioskApiError as exc:
+        except FriendsKitchenApiError as exc:
             return _fail(
                 f"{exc} The order is confirmed and unpaid — the customer's agent can "
                 "still pay the full amount."
@@ -458,7 +458,7 @@ def build_tools(session: MerchantSession) -> list:
                     "lines": session.cart.to_api_lines(),
                 },
             )
-        except KioskApiError as exc:
+        except FriendsKitchenApiError as exc:
             return _fail(str(exc))
 
         summary = placed["summary"]
@@ -527,7 +527,7 @@ def build_tools(session: MerchantSession) -> list:
                     "method": session.order["paymentMethod"],
                 },
             )
-        except KioskApiError as exc:
+        except FriendsKitchenApiError as exc:
             return _fail(str(exc))
 
         if not result.get("approved", False):
@@ -575,7 +575,7 @@ def build_tools(session: MerchantSession) -> list:
 
         try:
             detail = await _get(f"/orders/number/{number}")
-        except KioskApiError as exc:
+        except FriendsKitchenApiError as exc:
             return _fail(str(exc))
 
         return {

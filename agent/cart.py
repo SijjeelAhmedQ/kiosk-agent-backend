@@ -1,6 +1,6 @@
 """The agent's cart, held here rather than on the server.
 
-The kiosk API has no cart endpoint — `POST /orders` takes the whole basket in
+The Friends Kitchen API has no cart endpoint — `POST /orders` takes the whole basket in
 one shot and re-prices it server-side. So the agent needs somewhere to
 accumulate lines between "add two burgers" and "check out", and this is it.
 

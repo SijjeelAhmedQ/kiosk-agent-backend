@@ -1,7 +1,7 @@
 """The merchant's other pair of hands: the real touchscreen.
 
 Same tool names as `merchant_tools.py`, so the brief and the negotiation do not
-change — only what happens behind them. With these, the kiosk at 5173 visibly
+change — only what happens behind them. With these, Friends Kitchen at 5173 visibly
 fills itself while the two agents talk, which is the difference between being
 told the system works and watching it.
 
@@ -14,7 +14,7 @@ message rather than from a global. So the *driver* is reused, which is the part
 that knows the selectors and the waits, and the tools around it are the
 merchant's own.
 
-**What the screen cannot do that the API can.** The kiosk has no
+**What the screen cannot do that the API can.** Friends Kitchen has no
 confirmed-but-unpaid state: checkout shows the firm total, and the order is
 created, the coupon redeemed and the card charged by one press of the pay
 button. So `confirm_order` here reaches the checkout screen and quotes the firm
@@ -30,11 +30,11 @@ from typing import Any
 
 from strands import tool
 
-from agent import kiosk_api
+from agent import friends_kitchen_api
 from agent.a2a.merchant_tools import MerchantSession, _amount
 from agent.a2a.protocol import QUOTE, RECEIPT, Artifact, event_artifact
-from agent.browser.kiosk_driver import BrowserError, browser
-from agent.kiosk_api import KioskApiError
+from agent.browser.friends_kitchen_driver import BrowserError, browser
+from agent.friends_kitchen_api import FriendsKitchenApiError
 from agent.wallet import rupees
 
 _MONEY = re.compile(r"[\d,]+(?:\.\d+)?")
@@ -43,7 +43,7 @@ _MONEY = re.compile(r"[\d,]+(?:\.\d+)?")
 def _money(text: str | None) -> float:
     """`Rs 1,122` off the screen, as a number.
 
-    Everything the kiosk shows is already formatted for a person, and the
+    Everything Friends Kitchen shows is already formatted for a person, and the
     artifacts have to carry a figure the buyer's wallet can do arithmetic on.
     Zero on an unreadable screen rather than None: the callers all go on to
     compare it, and a None there is a crash instead of a wrong-looking quote.
@@ -70,7 +70,7 @@ async def _drive(action, *args) -> Any:
 
 
 def build_browser_tools(session: MerchantSession, headless: bool = False) -> list:
-    """The merchant's toolset, driving the kiosk in Chromium."""
+    """The merchant's toolset, driving Friends Kitchen in Chromium."""
 
     async def _ensure_open(order_type: str = "take_away") -> dict | None:
         """Start the browser and get to the menu, once. Returns a failure or None."""
@@ -81,7 +81,7 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
             await _drive(browser.open_menu, order_type)
         except BrowserError as exc:
             return _fail(
-                f"Could not open the kiosk ({exc}). Is the kiosk frontend running on 5173?"
+                f"Could not open Friends Kitchen ({exc}). Is the Friends Kitchen front end running on 5173?"
             )
         session.order["tillOpen"] = True
         session.order["orderType"] = order_type
@@ -89,7 +89,7 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
 
     @tool
     async def open_till(order_type: str = "take_away") -> dict:
-        """Open the kiosk and start an order. Do this before anything else.
+        """Open Friends Kitchen and start an order. Do this before anything else.
 
         The touchscreen asks dine-in or take-away before it will show a menu, so
         unlike the API this has to be settled up front — you cannot change it at
@@ -99,7 +99,7 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
             order_type: "dine_in" or "take_away".
 
         Returns:
-            The screen the kiosk is now on.
+            The screen Friends Kitchen is now on.
         """
         if order_type not in ("dine_in", "take_away"):
             return _fail("order_type must be 'dine_in' or 'take_away'.")
@@ -165,7 +165,7 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
         Args:
             product_id: An id from browse_menu. The card must be on screen.
             quantity: How many, 1 or more.
-            as_meal: Answer yes to "Make it a meal?" if the kiosk asks.
+            as_meal: Answer yes to "Make it a meal?" if Friends Kitchen asks.
 
         Returns:
             What was added and the basket total now showing.
@@ -226,7 +226,7 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
             "subtotal": _amount(total),
             "note": note
             or (
-                "Read off the kiosk basket. Tax is added at checkout, so the firm "
+                "Read off the Friends Kitchen basket. Tax is added at checkout, so the firm "
                 "total will be higher — confirm_order reports it."
             ),
         }
@@ -256,7 +256,7 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
             "ok": True,
             "held": session.coupon_code,
             "note": (
-                "Held. The kiosk has no way to test a coupon without applying it, "
+                "Held. Friends Kitchen has no way to test a coupon without applying it, "
                 "so it goes in at checkout — call confirm_order, then redeem_coupon."
             ),
         }
@@ -265,13 +265,13 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
     async def confirm_order(order_type: str = "", payment_method: str = "card") -> dict:
         """Take the basket to checkout and read the firm total.
 
-        Unlike the API, this does *not* create an order: the kiosk creates it,
+        Unlike the API, this does *not* create an order: Friends Kitchen creates it,
         redeems any coupon and charges the card all at once when take_payment
         presses the button. So nothing is on the restaurant's books yet, and
         there is no order number until payment goes through.
 
         Args:
-            order_type: Ignored here — the kiosk settled it at open_till.
+            order_type: Ignored here — Friends Kitchen settled it at open_till.
             payment_method: "card", "wallet" or "counter", chosen at checkout.
 
         Returns:
@@ -283,7 +283,7 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
         if order_type and order_type != session.order.get("orderType"):
             return _fail(
                 f"This order was started as {session.order.get('orderType')} and the "
-                "kiosk cannot change that at checkout. Say so, or start again."
+                "Friends Kitchen cannot change that at checkout. Say so, or start again."
             )
         if payment_method not in ("card", "wallet", "counter"):
             return _fail("payment_method must be 'card', 'wallet' or 'counter'.")
@@ -305,8 +305,8 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
             "total": _amount(due),
             "amountDue": _amount(due),
             "note": (
-                "Firm, from the kiosk checkout screen — tax included. Nothing is on "
-                "the restaurant's books yet: this kiosk creates the order, redeems "
+                "Firm, from the Friends Kitchen checkout screen — tax included. Nothing is on "
+                "the restaurant's books yet: this Friends Kitchen creates the order, redeems "
                 "the coupon and charges in one step, so the order number arrives "
                 "with the receipt."
             ),
@@ -345,7 +345,7 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
         if not result.get("applied"):
             return _fail(
                 result.get("problem")
-                or "The kiosk did not accept that coupon, and said nothing about why."
+                or "Friends Kitchen did not accept that coupon, and said nothing about why."
             )
 
         was = session.order["amountDue"]
@@ -359,7 +359,7 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
             "couponDiscount": _amount(round(was - due, 2)),
             "total": _amount(was),
             "amountDue": _amount(due),
-            "note": "Coupon applied at the kiosk. This is what is left to pay.",
+            "note": "Coupon applied at Friends Kitchen. This is what is left to pay.",
         }
         artifact = session.task.add_artifact(Artifact(name=QUOTE, data=data))
         session.task.stream.emit(event_artifact(artifact))
@@ -379,7 +379,7 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
         way back after it. Only call it when the customer's agent has said to.
 
         Returns:
-            The receipt, with the order number the kiosk finally shows.
+            The receipt, with the order number Friends Kitchen finally shows.
         """
         if "amountDue" not in session.order:
             return _fail("Not at checkout yet — call confirm_order first.")
@@ -393,7 +393,7 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
 
         if not result.get("paid"):
             return _fail(
-                f"The kiosk refused the payment: {result.get('problem')}. Nothing was charged."
+                f"Friends Kitchen refused the payment: {result.get('problem')}. Nothing was charged."
             )
 
         charged = _money(result.get("charged")) or session.order["amountDue"]
@@ -418,7 +418,7 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
     async def look_up_order(order_number: str = "") -> dict:
         """Look an order up in the restaurant's records.
 
-        Reads the API rather than the screen: the kiosk shows a receipt, not a
+        Reads the API rather than the screen: Friends Kitchen shows a receipt, not a
         history, and this is for answering questions after the fact.
 
         Args:
@@ -432,8 +432,8 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
             return _fail("No order number to look up — nothing has been paid for yet.")
 
         try:
-            detail = await asyncio.to_thread(kiosk_api.get, f"/orders/number/{number}")
-        except KioskApiError as exc:
+            detail = await asyncio.to_thread(friends_kitchen_api.get, f"/orders/number/{number}")
+        except FriendsKitchenApiError as exc:
             return _fail(str(exc))
 
         summary = detail.get("summary", {})

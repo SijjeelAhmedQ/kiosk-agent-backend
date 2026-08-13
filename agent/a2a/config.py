@@ -78,9 +78,9 @@ class A2ASettings:
     # --- The merchant's hands ---------------------------------------------- #
     # "api"     — the merchant orders through the REST API. Fast, and what CI
     #             would use if there were any.
-    # "browser" — the merchant drives the real kiosk at 5173 in Chromium, so the
+    # "browser" — the merchant drives the real Friends Kitchen at 5173 in Chromium, so the
     #             touchscreen visibly fills itself while the two agents talk.
-    #             Slower, and needs the kiosk frontend running.
+    #             Slower, and needs the Friends Kitchen front end running.
     merchant_hands: str = _env("A2A_MERCHANT_HANDS", "api").lower()
 
     # Browser hands only. Off by default, because the entire reason to choose

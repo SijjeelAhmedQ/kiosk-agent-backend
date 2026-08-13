@@ -1,7 +1,7 @@
 """The agent's hands, version two: the actual touchscreen website.
 
 Same errand, same shape of tool as api_tools — browse, add, coupon, pay — but
-every one of these drives Chromium against the React kiosk a customer would use.
+every one of these drives Chromium against the React Friends Kitchen a customer would use.
 Nothing here talks to the REST API directly.
 
 The wallet guardrail still applies. `pay` reads the amount off the checkout
@@ -15,13 +15,13 @@ import re
 
 from strands import tool
 
-from agent.browser.kiosk_driver import BrowserError, browser
+from agent.browser.friends_kitchen_driver import BrowserError, browser
 from agent.wallet import BudgetExceeded, rupees, wallet
 
 _MONEY = re.compile(r"[\d,]+(?:\.\d+)?")
 
 # "Coupon applied — Rs 1,200 off" / "Rs 950 off, tax included" — both shapes the
-# kiosk uses to say what a coupon took off.
+# Friends Kitchen uses to say what a coupon took off.
 _DISCOUNT = re.compile(r"([\d,]+(?:\.\d+)?)\s*off")
 
 # What the coupon promised on the checkout screen. The website spends it during
@@ -30,7 +30,7 @@ _reserved_coupon: dict[str, float] = {"amount": 0.0}
 
 
 def _money(text: str | None) -> float | None:
-    """"Rs 1,250" -> 1250.0. The kiosk renders whole rupees with a symbol."""
+    """"Rs 1,250" -> 1250.0. Friends Kitchen renders whole rupees with a symbol."""
     if not text:
         return None
     match = _MONEY.search(text)
@@ -55,7 +55,7 @@ def _discount(text: str | None) -> float:
         return 0.0
 
 
-# Everything the kiosk puts a figure in. The DOM is not consistent about it —
+# Everything Friends Kitchen puts a figure in. The DOM is not consistent about it —
 # `data-product-price` is a bare `1250`, a rendered total may already carry its
 # own prefix — so these are parsed back to numbers and written out one way.
 _MONEY_FIELDS = frozenset({"price", "basketTotal", "amountDue", "charged"})
@@ -109,13 +109,13 @@ def _guarded(action, *args, **kwargs) -> dict:
 # Getting in
 # --------------------------------------------------------------------------- #
 @tool
-def open_kiosk(order_type: str = "take_away") -> dict:
-    """Walk up to the kiosk: open the website and get as far as the menu.
+def open_friends_kitchen(order_type: str = "take_away") -> dict:
+    """Walk up to Friends Kitchen: open the website and get as far as the menu.
 
     Call this once, before anything else.
 
     Args:
-        order_type: "dine_in" or "take_away" — the kiosk asks this on the way in.
+        order_type: "dine_in" or "take_away" — Friends Kitchen asks this on the way in.
 
     Returns:
         The menu screen, with the products currently on it.
@@ -134,7 +134,7 @@ def open_kiosk(order_type: str = "take_away") -> dict:
 
 @tool
 def read_screen() -> dict:
-    """Look at what is on the kiosk screen right now.
+    """Look at what is on the Friends Kitchen screen right now.
 
     Use this whenever you are unsure where you are, or after something did not
     do what you expected. The screen changes after every tap.
@@ -234,11 +234,11 @@ def apply_coupon() -> dict:
     """Type the coupon you were given into the checkout screen's coupon box and
     apply it.
 
-    The kiosk validates it there and then, and says why if it will not take it.
+    Friends Kitchen validates it there and then, and says why if it will not take it.
     Applying only reserves the coupon — it is actually spent when you pay.
 
     Returns:
-        Whether the kiosk accepted it, and the amount now due in rupees.
+        Whether Friends Kitchen accepted it, and the amount now due in rupees.
     """
     if not wallet.coupon_code:
         return _fail("No coupon was issued for this errand.")
@@ -257,7 +257,7 @@ def pay(method: str = "card") -> dict:
     and refuses if that is more than the cash limit you were sent with — if it
     refuses, go back and remove items or apply the coupon.
 
-    A coupon that covers the whole order leaves nothing to choose: the kiosk
+    A coupon that covers the whole order leaves nothing to choose: Friends Kitchen
     hides the payment methods and the button becomes "Place order". That is
     normal, and this handles it.
 
@@ -295,7 +295,7 @@ def pay(method: str = "card") -> dict:
 
     if not result.get("paid"):
         return _fail(
-            f"The kiosk did not complete the payment: {result.get('problem')}. "
+            f"Friends Kitchen did not complete the payment: {result.get('problem')}. "
             "Do not try to pay a second time — report this."
         )
 
@@ -319,7 +319,7 @@ def pay(method: str = "card") -> dict:
 
 
 BROWSER_TOOLS = [
-    open_kiosk,
+    open_friends_kitchen,
     read_screen,
     list_categories,
     open_category,

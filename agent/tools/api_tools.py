@@ -24,9 +24,9 @@ from typing import Any
 
 from strands import tool
 
-from agent import kiosk_api
+from agent import friends_kitchen_api
 from agent.cart import cart
-from agent.kiosk_api import KioskApiError
+from agent.friends_kitchen_api import FriendsKitchenApiError
 from agent.wallet import BudgetExceeded, money, rupees, wallet
 
 # The order placed this run: {orderId, orderNumber, amountDue, ...}. Set by
@@ -79,10 +79,10 @@ def browse_menu(search: str = "", category_id: str = "") -> dict:
     """
     try:
         if category_id:
-            products = kiosk_api.get(f"/categories/{category_id}/products")
+            products = friends_kitchen_api.get(f"/categories/{category_id}/products")
         else:
-            products = kiosk_api.get("/products")
-    except KioskApiError as exc:
+            products = friends_kitchen_api.get("/products")
+    except FriendsKitchenApiError as exc:
         return _fail(str(exc))
 
     items = [_slim_product(p) for p in products]
@@ -116,8 +116,8 @@ def list_categories() -> dict:
         Category ids and names, for narrowing a later browse_menu call.
     """
     try:
-        categories = kiosk_api.get("/categories")
-    except KioskApiError as exc:
+        categories = friends_kitchen_api.get("/categories")
+    except FriendsKitchenApiError as exc:
         return _fail(str(exc))
 
     return {
@@ -146,8 +146,8 @@ def add_to_cart(product_id: str, quantity: int = 1, as_meal: bool = False) -> di
         return _fail("Quantity must be at least 1.")
 
     try:
-        product = kiosk_api.get(f"/products/{product_id}")
-    except KioskApiError as exc:
+        product = friends_kitchen_api.get(f"/products/{product_id}")
+    except FriendsKitchenApiError as exc:
         return _fail(
             f"{exc} Call browse_menu to get a valid product id — ids are not the product name."
         )
@@ -216,7 +216,7 @@ def check_coupon() -> dict:
         return _fail("The cart is empty, so there is nothing for the coupon to apply to.")
 
     try:
-        result = kiosk_api.post(
+        result = friends_kitchen_api.post(
             "/coupons/validate",
             {
                 "couponCode": wallet.coupon_code,
@@ -225,7 +225,7 @@ def check_coupon() -> dict:
                 "cartLines": cart.to_coupon_lines(),
             },
         )
-    except KioskApiError as exc:
+    except FriendsKitchenApiError as exc:
         return _fail(str(exc))
 
     return {
@@ -263,7 +263,7 @@ def place_order(order_type: str = "take_away", payment_method: str = "card") -> 
         return _fail("payment_method must be 'card', 'wallet' or 'counter'.")
 
     try:
-        placed = kiosk_api.post(
+        placed = friends_kitchen_api.post(
             "/orders",
             {
                 "orderType": order_type,
@@ -271,7 +271,7 @@ def place_order(order_type: str = "take_away", payment_method: str = "card") -> 
                 "lines": cart.to_api_lines(),
             },
         )
-    except KioskApiError as exc:
+    except FriendsKitchenApiError as exc:
         return _fail(str(exc))
 
     summary = placed["summary"]
@@ -314,7 +314,7 @@ def apply_coupon() -> dict:
         return _fail("No coupon was issued for this errand.")
 
     try:
-        redemption = kiosk_api.post(
+        redemption = friends_kitchen_api.post(
             "/coupons/redeem",
             {
                 "couponCode": wallet.coupon_code,
@@ -323,7 +323,7 @@ def apply_coupon() -> dict:
                 "customerId": wallet.customer_id,
             },
         )
-    except KioskApiError as exc:
+    except FriendsKitchenApiError as exc:
         return _fail(
             f"{exc} The order is still unpaid — you can pay the full amount with "
             "authorize_payment if it fits your cash limit."
@@ -365,11 +365,11 @@ def authorize_payment() -> dict:
         return _fail(str(exc))
 
     try:
-        result = kiosk_api.post(
+        result = friends_kitchen_api.post(
             "/payments",
             {"orderNumber": _order["orderNumber"], "method": _order["paymentMethod"]},
         )
-    except KioskApiError as exc:
+    except FriendsKitchenApiError as exc:
         return _fail(str(exc))
 
     if not result.get("approved", False):
@@ -406,8 +406,8 @@ def get_order(order_number: str = "") -> dict:
         return _fail("No order number to look up.")
 
     try:
-        detail = kiosk_api.get(f"/orders/number/{number}")
-    except KioskApiError as exc:
+        detail = friends_kitchen_api.get(f"/orders/number/{number}")
+    except FriendsKitchenApiError as exc:
         return _fail(str(exc))
 
     return {

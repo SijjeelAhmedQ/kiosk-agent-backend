@@ -31,26 +31,26 @@ def credentials_ready() -> tuple[bool, str | None]:
     if settings.provider == "anthropic":
         if not os.getenv("ANTHROPIC_API_KEY", "").strip():
             return False, (
-                "ANTHROPIC_API_KEY is not set. Put it in kiosk-agent/.env "
+                "ANTHROPIC_API_KEY is not set. Put it in friends-kitchen-agent-backend/.env "
                 "(copy .env.example) — the agent needs its own key."
             )
     elif settings.provider == "gemini":
         if not os.getenv("GOOGLE_API_KEY", "").strip():
             return False, (
                 "GOOGLE_API_KEY is not set. Get a free key at "
-                "https://aistudio.google.com/apikey and put it in kiosk-agent/.env."
+                "https://aistudio.google.com/apikey and put it in friends-kitchen-agent-backend/.env."
             )
     elif settings.provider == "openai":
         if not os.getenv("OPENAI_API_KEY", "").strip():
             return False, (
                 "OPENAI_API_KEY is not set. Get a key at "
-                "https://platform.openai.com/api-keys and put it in kiosk-agent/.env."
+                "https://platform.openai.com/api-keys and put it in friends-kitchen-agent-backend/.env."
             )
     elif settings.provider == "groq":
         if not os.getenv("GROQ_API_KEY", "").strip():
             return False, (
                 "GROQ_API_KEY is not set. Get a free key at "
-                "https://console.groq.com/keys and put it in kiosk-agent-backend/.env."
+                "https://console.groq.com/keys and put it in friends-kitchen-agent-backend/.env."
             )
     elif settings.provider == "huggingface":
         if not os.getenv("HF_TOKEN", "").strip():
@@ -58,7 +58,7 @@ def credentials_ready() -> tuple[bool, str | None]:
                 "HF_TOKEN is not set. Get a free token at "
                 "https://huggingface.co/settings/tokens (it needs the "
                 "'Make calls to Inference Providers' permission) and put it in "
-                "kiosk-agent-backend/.env."
+                "friends-kitchen-agent-backend/.env."
             )
     elif settings.provider == "ollama":
         # Nothing to check — a local Ollama needs no key. If the daemon is down
@@ -86,7 +86,7 @@ def credentials_ready() -> tuple[bool, str | None]:
     if expected and not settings.model_id.lower().startswith(expected):
         return False, (
             f"AGENT_MODEL is {settings.model_id!r}, which is not a {settings.provider} model. "
-            f"Blank AGENT_MODEL in kiosk-agent/.env to use the default, or set a {expected[0]}-* id."
+            f"Blank AGENT_MODEL in friends-kitchen-agent-backend/.env to use the default, or set a {expected[0]}-* id."
         )
 
     return True, None
