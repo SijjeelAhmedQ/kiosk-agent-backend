@@ -150,6 +150,35 @@ def haversine_km(
 
 
 # --------------------------------------------------------------------------- #
+# The customer's own address
+# --------------------------------------------------------------------------- #
+# One address, held once, read by everything that needs somewhere to deliver to
+# when no browser was there to ask. Built from configuration rather than written
+# here — see `FK_CUSTOMER_ADDRESS` in agent/config.py.
+#
+# It is deliberately a `UserLocation` like any other and not a special case: the
+# branch chooser, the delivery contract and the courier all take one of these,
+# so a saved address that arrived from .env and a fix that arrived from a phone
+# travel down exactly the same path. `source` is "manual" because that is what
+# it is — somebody typed it, once, into a file.
+def saved() -> UserLocation:
+    """The customer's saved address — where "deliver it to me" means.
+
+    Used by the A2A flow, which has no location UI at all, and offered as one
+    click by the errand console instead of a permission prompt. A run that
+    carries its own fix uses that one; this is the fallback, never an override.
+    """
+    from agent.config import settings
+
+    return UserLocation(
+        latitude=settings.customer_latitude,
+        longitude=settings.customer_longitude,
+        label=settings.customer_address,
+        source="manual",
+    )
+
+
+# --------------------------------------------------------------------------- #
 # The location this errand is going to
 # --------------------------------------------------------------------------- #
 # Module-level, and deliberately so: the tools read it the way they read the

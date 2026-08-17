@@ -38,6 +38,15 @@ class CourierAgentProvider:
     name = "internal"
     display_name = "Friends Kitchen Delivery"
 
+    #: Where this service's job routes live under its base URL. A class
+    #: attribute rather than a literal in two methods, so a second courier that
+    #: speaks the same wire format is a subclass with three lines in it — see
+    #: `agent/delivery/mock_foodpanda.py`.
+    root = "/api/delivery"
+
+    #: How to start it, for the message a caller reads when it is not answering.
+    start_hint = ".venv\\Scripts\\python -m uvicorn delivery_server:app --port 8102"
+
     def __init__(self, base_url: str | None = None, timeout: float | None = None):
         self._base = (base_url or settings.delivery_base).rstrip("/")
         self._timeout = timeout or settings.delivery_timeout
@@ -66,7 +75,7 @@ class CourierAgentProvider:
         except httpx.HTTPError:
             raise DeliveryUnavailable(
                 f"{self.display_name} is not reachable at {self._base}. "
-                "Start it with: .venv\\Scripts\\python -m uvicorn delivery_server:app --port 8102"
+                f"Start it with: {self.start_hint}"
             ) from None
 
         try:
@@ -104,7 +113,7 @@ class CourierAgentProvider:
     # -- the contract ------------------------------------------------------ #
     def dispatch(self, request: DeliveryRequest) -> DeliveryJob:
         request.validate()
-        job = self._job(self._call("POST", "/api/delivery/jobs", request.to_message()))
+        job = self._job(self._call("POST", f"{self.root}/jobs", request.to_message()))
         if not job.job_id:
             raise DeliveryUnavailable(
                 f"{self.display_name} accepted the order but returned no job id, "
@@ -113,4 +122,4 @@ class CourierAgentProvider:
         return job
 
     def status(self, job_id: str) -> DeliveryJob:
-        return self._job(self._call("GET", f"/api/delivery/jobs/{job_id}"))
+        return self._job(self._call("GET", f"{self.root}/jobs/{job_id}"))

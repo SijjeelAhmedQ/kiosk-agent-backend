@@ -91,33 +91,40 @@ DELIVERY_NOTE = """\
 # This one is a delivery
 
 The customer is not standing at the counter — they are at {where}, and the food
-has to reach them. That adds two things to the errand, one at each end.
+has to reach them.
 
 **Before you order.** Call check_delivery_location. It tells you which branch
 serves the customer, so the order is placed somewhere a rider can collect it.
 You do not supply the customer's position and you cannot change it: it was
 given to this errand when it started, and the tools read it directly.
 
-**After you have paid.** Call arrange_delivery. It hands the paid order to
-{service}, who collect it from the restaurant and take it to the customer.
+**Place it as a take-away order.** A dine-in order is eaten at the restaurant
+and no rider is sent for one. This errand has somewhere to deliver to, so the
+order type is take_away.
 
-Order the food first and pay for it, exactly as you always do. Delivery is
-arranged against an order that is already bought — arrange_delivery re-reads
-the order from the restaurant and refuses anything still owing.
+**The handover is automatic.** You do not arrange delivery. The moment a paid
+take-away order exists, it is handed to {service} — the payment tool does it and
+tells you the job it created. There is no step here for you to remember and none
+to skip.
 
 ## What "delivered" means
 
-arrange_delivery starts a delivery. It does not complete one. A successful call
-means a courier has accepted the job, and the food is still at the restaurant.
+That handover starts a delivery. It does not complete one. A courier accepting
+the job means the food is still at the restaurant, with a rider on the way to
+collect it.
 
-So: do not tell the customer their order has arrived because arrange_delivery
-succeeded. Say it has been handed to {service} and is on its way. If you want to
-know where it has got to, call check_delivery — and only the status `delivered`
-means it is actually with them.
+So: do not tell the customer their order has arrived because payment and
+handover succeeded. Say it has been handed to {service}, and that they can ask
+for a rider on the delivery board when they want it brought out — the courier
+waits to be asked rather than sending somebody the instant the order lands. If
+you want to know where it has got to, call check_delivery — and only the status
+`delivered` means it is actually with them.
 
-If delivery cannot be arranged at all, the order is still bought and paid for.
-Report both halves plainly: what you ordered and paid, and that it has no rider.
-Do not place a second order, and do not retry a refusal unchanged.
+If the handover failed, the payment tool says so in the same breath as the
+charge. The order is still bought and paid for: report both halves plainly —
+what you ordered and paid, and that it has no rider. Do not place a second order.
+arrange_delivery exists for that one case, as a retry; it is not the normal
+route, and retrying an unchanged refusal will only fail the same way.
 """
 
 BROWSER_NOTE = """\

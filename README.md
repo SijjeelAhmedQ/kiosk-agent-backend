@@ -14,6 +14,22 @@ There are two ways to drive it — a control panel, or the command line.
 …and `npm run dev` in **`friends-kitchen-agent-frontend`** (port 5174). Write the errand, pick a
 coupon, watch the agent work. See [that app's README](../friends-kitchen-agent-frontend/README.md).
 
+**The other three processes.** Each console here talks to its own agent on its own
+port, and a console whose agent is not running says so rather than pretending.
+Start the ones you want:
+
+```bash
+.venv\Scripts\python -m uvicorn a2a_server:app       --port 8101 --reload  # /a2a.html
+.venv\Scripts\python -m uvicorn delivery_server:app  --port 8102 --reload  # the in-house courier
+.venv\Scripts\python -m uvicorn foodpanda_server:app --port 8103 --reload  # /foodpanda.html
+```
+
+The delivery pair is an either/or, and `DELIVERY_PROVIDER` picks which: `internal`
+sends paid orders to **8102**, `mock_foodpanda` to **8103**. They are different
+services and neither can answer the other's jobs — so if a paid order gets no
+rider, the first thing to check is that the port your provider names is the port
+you started.
+
 **The CLI**, for scripting and quick checks:
 
 ```bash
@@ -155,7 +171,8 @@ deliberate change to those hooks can.
 ```
 run.py                       CLI — parses the errand, fills the wallet, starts the agent
 server.py                    HTTP front door: starts runs, streams them as SSE (for the UI)
-delivery_server.py           The delivery agent — its own service on 8102, with its own card
+delivery_server.py           The in-house courier — its own service on 8102, with its own card
+foodpanda_server.py          The Foodpanda dispatcher agent — its own service on 8103, with a brain
 agent/
   config.py                  Environment-driven settings
   wallet.py                  The token and the cash ceiling. Enforced, not suggested.
@@ -211,12 +228,48 @@ detect location → user_location → nearest branch → order → pay
         customer  ←──── delivery agent ←──── order + pickup + dropoff
 ```
 
+**The handover is automatic, not a step the agent takes.** The instant a paid
+take-away order exists, `authorize_payment` (or browser mode's `pay`) hands it to
+the configured courier and returns the job alongside the charge. Delivery is
+therefore a property of a paid take-away order, not something a model has to
+remember to ask for — which matters, because the run where it forgets is a
+customer left with a paid order and no rider. `arrange_delivery` is still there
+as the retry when that automatic handover reported a failure, and it refuses a
+second rider for an order that already has one.
+
+A dine-in order is never dispatched, whatever the errand carries: it is eaten at
+the restaurant, and `place_order` says so in its result while the choice can
+still be corrected.
+
 **Where the location lives.** `agent/location.py`, held for the run the way the
 wallet is. It is never passed through the prompt and the delivery tools take no
 coordinate arguments — a model that retyped a latitude could move a delivery a
 hundred kilometres and nothing would look wrong. `parse()` refuses anything that
 is not a place on Earth, including 0°,0°, which is what a device with no fix
 reports.
+
+**The customer's own address.** `location.saved()`, built from three variables in
+`.env` (`FK_CUSTOMER_ADDRESS`, `FK_CUSTOMER_LAT`, `FK_CUSTOMER_LON`). It is the
+same `UserLocation` a device fix produces, so it travels down exactly the same
+path — nothing downstream knows which of the two it was handed. Two flows need
+it, because neither has a browser to ask:
+
+- the errand console offers it as one click, which is what turning the *Where it
+  goes* switch on now fills in — a street a rider can read instead of a
+  permission prompt and five decimal places;
+- the **A2A negotiation has no location UI at all**, so a paid take-away order
+  there goes to the saved address. See `agent/a2a/delivery.py`.
+
+A run that carries its own fix uses that one. The saved address is the fallback,
+never an override.
+
+**Both buying agents hand over the same way.** `agent/delivery/handover.py` is
+the one place a delivery message is assembled: the order and its lines re-read
+from the restaurant, payment re-derived from the payment ledger, the pickup from
+the branch directory. The errand agent calls it from `authorize_payment` and the
+A2A merchant from `take_payment`, so the two cannot drift into two different
+ideas of when a courier may be sent — and an order bought by either appears on
+the same board at `/foodpanda.html`.
 
 **Which restaurant.** The Friends Kitchen API has no branch concept, so the
 directory is `FK_BRANCHES` in `.env` and lives in `agent/branches.py`. Blank
@@ -233,16 +286,70 @@ cart, the wallet or the placed order — only what the request carried.
 
 **Adding a courier** is a file in `agent/delivery/` and a line in `registry.py`.
 Everything upstream speaks `DeliveryRequest`; only the provider has heard of
-`pickup_contact`. `DELIVERY_PROVIDER` picks one — `internal` (no credentials) or
-`foodpanda` (`FOODPANDA_API_KEY`, read on this server, never returned by a tool).
+`pickup_contact`. `DELIVERY_PROVIDER` picks one:
+
+| `DELIVERY_PROVIDER` | Who carries it | Needs |
+| --- | --- | --- |
+| `internal` | The courier on 8102 — a state machine on a clock | nothing |
+| `mock_foodpanda` | The dispatcher **agent** on 8103 — an LLM that decides | a model key |
+| `foodpanda` | Foodpanda's real courier API | `FOODPANDA_API_KEY` |
+
+### The delivery agent that thinks
+
+`foodpanda_server.py` is the second agent in this repo, and the difference from
+the courier on 8102 is not the port — it is that a model is in charge of the
+job. It reads the request through a tool, decides whether the drop is inside its
+service radius, **refuses it if not**, and only then assigns a rider and runs the
+legs. Its reasoning is streamed, so the console at `/foodpanda.html` shows an
+agent working rather than a progress bar.
+
+```bash
+.venv\Scripts\python -m uvicorn foodpanda_server:app --port 8103
+```
+
+What keeps that safe is `agent/foodpanda/jobs.py`: the model cannot *write* a
+status, only ask for the next legal one, and `picked_up → delivered` without a
+ride is not in the transition table. The legs are compressed to seconds and
+awaited, never skipped. It is a demonstration courier and says so on its own
+agent card — for a real one, point `DELIVERY_PROVIDER=foodpanda` at the API.
+
+### Two steps belong to the customer
+
+The dispatcher decides whether it will take a delivery. It does not decide when
+the customer wants it. So a job holds twice, and both are requests made from the
+board:
+
+```
+requested → accepted ──[ Find a rider ]──→ courier_assigned → picked_up
+                                                                  │
+                          delivered ← in_transit ←──[ Deliver it to me ]
+```
+
+| Ask | Waits at | Route |
+| --- | --- | --- |
+| a rider | `accepted` | `POST /api/foodpanda/jobs/{id}/find-rider` |
+| the delivery | `picked_up` | `POST /api/foodpanda/jobs/{id}/deliver` |
+
+The wait is the dispatcher's own: it called `assign_rider`, and that tool has not
+returned yet. There is no second copy of the job's progress being kept while the
+board catches up, because the delivery genuinely has not moved — which is why the
+job's `awaiting` field, not its status, is what lights a button. A request for a
+step the job is not holding is a `409`, so a page left open on a finished
+delivery cannot send a rider to an order that arrived ten minutes ago.
+
+`MOCK_FOODPANDA_MANUAL_STEPS=false` turns both gates off and a job runs itself
+end to end, for an unattended demo. Nothing about the agent's decisions changes
+either way, and a job nobody ever attends to fails on
+`MOCK_FOODPANDA_OPERATOR_TIMEOUT_SECONDS` rather than holding a rider for ever.
 
 ### Sent is not delivered
 
 The one thing this flow will not do is call an order delivered because the
 dispatch succeeded:
 
-- `arrange_delivery` returns `status: "requested"` and `delivered: false`. The
-  tool's docstring, the system prompt and the agent card all say so separately.
+- The handover returns `status: "requested"` and `delivered: false`, whether it
+  came from payment or from `arrange_delivery`. The tool docstrings, the system
+  prompt and the agent card all say so separately.
 - `DeliveryJob.delivered` is true for exactly one status. A courier reporting a
   word we do not recognise maps to `unknown`, never to `delivered`.
 - `POST /api/delivery/jobs` never returns `delivered`; a job reaches it only
@@ -269,11 +376,15 @@ These are enforced in code, not asked for in the prompt:
 - **Agent orders are identifiable.** Every order and redemption carries
   `X-Terminal-Id: agent-01` (configurable), so the admin screens can tell agent
   traffic from walk-in traffic.
-- **An unpaid order cannot be sent for delivery.** `arrange_delivery` re-reads
-  the order from the restaurant and checks the status *and* the payment ledger
-  before dispatching. The delivery agent checks again on its own side.
-- **One order cannot get two riders.** A second `arrange_delivery` in the same
-  run is refused with the job id of the first.
+- **An unpaid order cannot be sent for delivery.** Every handover re-reads the
+  order from the restaurant and checks the status *and* the payment ledger before
+  dispatching. The delivery agent checks again on its own side.
+- **One order cannot get two riders.** The automatic handover happens once, and a
+  later `arrange_delivery` in the same run is refused with the job id of the
+  first.
+- **A courier that will not answer cannot fail a payment.** The automatic
+  handover never raises: the money has already moved by the time it runs, so a
+  refusal comes back beside the charge rather than turning it into an error.
 - **A failed courier cannot lose an order.** Every delivery failure leaves the
   order placed and paid, and says so — the ordering half is untouched by it.
 
@@ -299,6 +410,10 @@ And with the model in the loop, for the delivery flow:
 | Counter order (no location) | Order **335**, coupon redeemed — no location event, no delivery tools offered, tool sequence unchanged |
 | Courier offline mid-errand | Order **337** still placed and paid; agent did not retry and reported "no rider" rather than delivery |
 | Unpaid order offered for delivery | Refused on both sides — `arrange_delivery` and the delivery agent |
+| Errand agent → the dispatcher agent on 8103 | Order **356** paid Rs 610, on the board at `accepted` awaiting a rider; rider Bilal Rehman, then `delivered` to the saved address |
+| A2A negotiation → the same board | Order **357** paid Rs 610, dispatched to the saved address with no location UI anywhere in the flow |
+| Gated steps, by hand | Held at `accepted` until `find-rider`, then at `picked_up` until `deliver`; `delivered` only after both legs elapsed (70.4s) |
+| Repeat request on a finished job | `409` — a page left open cannot send a rider to a delivered order |
 
 ---
 

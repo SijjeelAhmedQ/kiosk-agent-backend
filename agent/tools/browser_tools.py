@@ -28,6 +28,11 @@ _DISCOUNT = re.compile(r"([\d,]+(?:\.\d+)?)\s*off")
 # payment, so it is only banked in the wallet once payment actually succeeds.
 _reserved_coupon: dict[str, float] = {"amount": 0.0}
 
+# Which kind of order this run started. Recorded on the way in because that is
+# the only place the website asks, and `pay` needs it at the far end: a paid
+# take-away order on a delivery errand goes to a courier, a dine-in one does not.
+_order_type: dict[str, str] = {"value": "take_away"}
+
 
 def _money(text: str | None) -> float | None:
     """"Rs 1,250" -> 1250.0. Friends Kitchen renders whole rupees with a symbol."""
@@ -86,12 +91,29 @@ def reset() -> None:
     """Forget the previous errand's coupon reservation, and close any browser it
     left open — a stale session would start the next run mid-checkout."""
     _reserved_coupon["amount"] = 0.0
+    _order_type["value"] = "take_away"
     if browser.started:
         browser.close()
 
 
 def _fail(message: str) -> dict:
     return {"ok": False, "error": message}
+
+
+def _auto_deliver(order_number: str) -> dict | None:
+    """Send a paid take-away order to the courier, without being asked to.
+
+    The browser-mode twin of the same helper in api_tools, and deliberately the
+    same shape: whether the agent bought the food through the API or by tapping
+    the website, a paid take-away order on a delivery errand reaches a rider the
+    same way. Returns None when there is nothing to do.
+    """
+    if _order_type["value"] != "take_away" or not order_number:
+        return None
+
+    from agent.tools import delivery_tools
+
+    return delivery_tools.auto_dispatch(order_number)
 
 
 def _guarded(action, *args, **kwargs) -> dict:
@@ -129,6 +151,7 @@ def open_friends_kitchen(order_type: str = "take_away") -> dict:
         except Exception as exc:
             return _fail(f"Could not open the browser: {exc}")
 
+    _order_type["value"] = order_type
     return _guarded(browser.open_menu, order_type)
 
 
@@ -309,13 +332,30 @@ def pay(method: str = "card") -> dict:
         wallet.record_coupon(_reserved_coupon["amount"])
         _reserved_coupon["amount"] = 0.0
 
-    return {
+    paid = {
         "ok": True,
         "paid": True,
         "orderNumber": result.get("orderNumber"),
         "charged": rupees(charged),
         "wallet": wallet.display(),
     }
+
+    # Same rule as the API toolset: the order is bought, so it goes to a courier
+    # now rather than when the agent gets round to asking. The website has no
+    # delivery of its own — the handover is an agent-to-agent call either way.
+    delivery = _auto_deliver(str(paid["orderNumber"] or ""))
+    if delivery is not None:
+        paid["delivery"] = delivery
+        paid["next"] = (
+            "The order is paid and a courier has it — use check_delivery for "
+            "where it has got to. It is not delivered until that says so."
+            if delivery.get("ok")
+            else (
+                "The order is paid, but it has no rider: "
+                f"{delivery.get('error')} Report both halves plainly."
+            )
+        )
+    return paid
 
 
 BROWSER_TOOLS = [

@@ -397,6 +397,11 @@ def health() -> dict:
             # a credential — the answer is "a key is present", not what it is.
             "delivery": delivery_registry.describe(),
             "branches": len(branches.BRANCHES),
+            # The customer's saved address, so the console can offer "deliver to
+            # my address" as one click rather than a permission prompt. Served
+            # from here rather than written into the UI so there is one copy of
+            # it: change FK_CUSTOMER_ADDRESS and the button follows.
+            "customer": location.saved().to_view(),
         },
     }
 

@@ -105,8 +105,30 @@ class Settings:
     # Blank means one branch, which is what the API already assumes.
     branches_json: str = _env("FK_BRANCHES", "")
 
+    # --- The customer's own address ---------------------------------------- #
+    # Where "deliver it to me" means, for the flows that have no browser to ask.
+    # The A2A negotiation has no location UI at all — two agents talking on a
+    # port — and the errand console offers this as one click instead of a
+    # permission prompt, so the saved address is what most deliveries here go to.
+    #
+    # It is configuration rather than a literal in the code because it is one
+    # person's street: change these three variables and nothing else moves.
+    # The coordinates are the address's approximate fix in Karachi — they decide
+    # which branch collects and how far the rider is told to go, so set them
+    # properly before pointing this at a courier that charges by the kilometre.
+    customer_address: str = _env(
+        "FK_CUSTOMER_ADDRESS",
+        "Shabbir Lane, Street No 6 East, opposite Malik Car Parking",
+    )
+    customer_latitude: float = float(_env("FK_CUSTOMER_LAT", "24.8760"))
+    customer_longitude: float = float(_env("FK_CUSTOMER_LON", "67.0300"))
+
     # --- Delivery ---------------------------------------------------------- #
-    # Which delivery agent to hand a paid order to: internal | foodpanda.
+    # Which delivery agent to hand a paid order to:
+    #   internal       — the in-house courier on 8102 (delivery_server.py)
+    #   mock_foodpanda — the Foodpanda dispatcher agent on 8103, an AI that
+    #                    decides and rides (foodpanda_server.py)
+    #   foodpanda      — Foodpanda's real courier API, needs FOODPANDA_API_KEY
     # The in-house courier needs no credentials, so it is the default and the
     # fallback — see agent/delivery/registry.py.
     delivery_provider: str = _env("DELIVERY_PROVIDER", "internal")
@@ -115,6 +137,11 @@ class Settings:
     # process on its own port, like the A2A merchant on 8101 — which is what
     # makes the handover a real agent-to-agent call rather than a function one.
     delivery_base: str = _env("DELIVERY_BASE_URL", "http://localhost:8102")
+
+    # Where the Foodpanda demonstration agent listens (foodpanda_server.py).
+    # A third process on a third port, for the same reason as the second: an
+    # agent reached over HTTP is one that could be run by somebody else.
+    mock_foodpanda_base: str = _env("MOCK_FOODPANDA_BASE_URL", "http://localhost:8103")
 
     # Foodpanda's courier API. The key is FOODPANDA_API_KEY, read from the
     # environment at call time and never returned by a tool.

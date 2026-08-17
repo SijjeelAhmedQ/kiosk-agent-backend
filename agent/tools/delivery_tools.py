@@ -4,6 +4,11 @@ Three tools, and the order they are meant to be used in is the order they
 appear: find out where the customer is and which branch serves them, hand the
 paid order to a delivery agent, then ask that agent where it has got to.
 
+The middle step is not usually the agent's to take. `auto_dispatch` is called by
+the payment tools the instant a take-away order is bought, so the handover
+happens whether or not the model thinks to ask for it — `arrange_delivery` is
+left as the retry, not the route. See that function for why.
+
 What these tools deliberately do *not* do is trust the model for any of it. The
 customer's coordinates come from `agent/location.py`, not from an argument —
 a model that retyped a latitude could move a delivery a hundred kilometres and
@@ -23,17 +28,13 @@ from typing import Any
 
 from strands import tool
 
-from agent import branches, friends_kitchen_api, location
-from agent.delivery import registry
+from agent import branches, location
+from agent.delivery import handover, registry
 from agent.delivery.contract import (
     DeliveryError,
-    DeliveryItem,
     DeliveryJob,
     DeliveryRejected,
-    DeliveryRequest,
-    Place,
 )
-from agent.friends_kitchen_api import FriendsKitchenApiError
 from agent.tools.api_tools import current_order
 
 # The delivery arranged this run: {jobId, provider, status}. Set by
@@ -122,103 +123,13 @@ def check_delivery_location() -> dict:
 # --------------------------------------------------------------------------- #
 # The handover
 # --------------------------------------------------------------------------- #
-def _build_request(order_number: str, notes: str | None) -> DeliveryRequest:
-    """Assemble the message from facts, not from what the agent remembers.
+def dispatch_now(order_number: str = "", notes: str | None = None) -> dict:
+    """The handover itself — the same work whether a tool asked for it or not.
 
-    Every field is re-read here: the order and its lines from the restaurant,
-    the customer's position from the location this run was started with, the
-    branch from the directory. That is what makes `validate()` meaningful —
-    it is checking the world, not checking the prompt.
-    """
-    user_location = location.current()
-    if user_location is None:
-        raise DeliveryRejected(
-            "This errand has no customer location, so there is nowhere to deliver to. "
-            "It is a counter order — report it as placed and paid, and stop there."
-        )
-
-    try:
-        detail = friends_kitchen_api.get(f"/orders/number/{order_number}")
-    except FriendsKitchenApiError as exc:
-        raise DeliveryRejected(
-            f"Could not read order {order_number} back from the restaurant to confirm "
-            f"it before arranging delivery: {exc}"
-        ) from None
-
-    summary = detail.get("summary") or {}
-    status = str(detail.get("status") or "unknown")
-
-    # Two independent readings of "is this bought?", and both have to agree.
-    # The status is the restaurant's own word for it; the payment ledger is the
-    # arithmetic behind that word.
-    #
-    # Note which figure is *not* used here: `summary.amountDue` is what the
-    # order came to after any coupon — what was owed, not what is still owing.
-    # It stays at the full amount after payment, so reading it as a balance
-    # refuses every paid order there is.
-    approved = sum(
-        float(payment.get("amount") or 0)
-        for payment in detail.get("payments") or []
-        if payment.get("status") == "approved"
-    )
-    owed = float(summary.get("amountDue") or 0)
-    paid = status == "paid" and approved + 1e-9 >= owed
-
-    items = [
-        DeliveryItem(
-            name=str(line.get("name") or "Item"),
-            quantity=int(line.get("quantity") or 1),
-        )
-        for line in detail.get("lines") or []
-    ]
-
-    branch, distance_km = branches.nearest(user_location)
-
-    return DeliveryRequest(
-        order_id=str(detail.get("orderId") or current_order().get("orderId") or ""),
-        order_number=str(detail.get("orderNumber") or order_number),
-        order_status=status,
-        paid=paid,
-        pickup=Place(
-            latitude=branch.latitude,
-            longitude=branch.longitude,
-            address=branch.address,
-            name=branch.name,
-            phone=branch.phone,
-            note=f"Collect order #{order_number}",
-        ),
-        dropoff=Place(
-            latitude=user_location.latitude,
-            longitude=user_location.longitude,
-            address=user_location.label or user_location.display(),
-            note=user_location.label,
-        ),
-        items=items,
-        notes=notes or None,
-        branch_id=branch.id,
-        distance_km=distance_km,
-    )
-
-
-@tool
-def arrange_delivery(order_number: str = "", notes: str = "") -> dict:
-    """Hand the paid order to the delivery service so a rider collects it.
-
-    Call this only after the order is placed *and* paid — it re-reads the order
-    from the restaurant and refuses if anything is still owed on it.
-
-    This starts a delivery; it does not complete one. A successful call means a
-    courier has the job, not that the food has arrived. Use check_delivery to
-    find out where it has got to, and never report an order as delivered on the
-    strength of this tool succeeding.
-
-    Args:
-        order_number: Defaults to the order placed during this errand.
-        notes: Anything the rider needs — a gate code, "leave at reception".
-
-    Returns:
-        The delivery job: which service has it, its id, its status, and an ETA
-        if the service gave one.
+    Not a `@tool`: this is what `arrange_delivery` does when the model calls it
+    and what `auto_dispatch` does when payment triggers it, and having one body
+    is what keeps the two paths from drifting into two different ideas of when a
+    courier may be sent.
     """
     number = order_number or current_order().get("orderNumber", "")
     if not number:
@@ -233,11 +144,20 @@ def arrange_delivery(order_number: str = "", notes: str = "") -> dict:
             f"{_job.get('deliveryService')}. Use check_delivery to see where it is."
         )
 
-    provider = registry.get()
+    user_location = location.current()
+    if user_location is None:
+        return _fail(
+            "This errand has no customer location, so there is nowhere to deliver to. "
+            "It is a counter order — report it as placed and paid, and stop there."
+        )
 
     try:
-        request = _build_request(number, notes.strip() or None)
-        job = provider.dispatch(request)
+        provider, request, job = handover.dispatch(
+            number,
+            user_location,
+            (notes or "").strip() or None,
+            order_id_fallback=current_order().get("orderId", ""),
+        )
     except DeliveryRejected as exc:
         # Our own refusal: the request was not fit to send. The order stands,
         # paid, and the agent should say so rather than retrying.
@@ -268,6 +188,62 @@ def arrange_delivery(order_number: str = "", notes: str = "") -> dict:
         "delivered until the status says so."
     )
     return result
+
+
+def auto_dispatch(order_number: str = "") -> dict | None:
+    """Hand a paid take-away order over the moment it is bought, unasked.
+
+    Called by the payment tools, not by the model. That is the point: a delivery
+    that depends on the agent remembering to arrange one is a delivery that goes
+    missing on the run where it forgets, and the customer is left with a paid
+    order and no rider. Payment succeeding is the fact that makes an order
+    dispatchable, so payment succeeding is what dispatches it.
+
+    Returns None when there is nothing to do — a counter errand with no location,
+    or a job already arranged — so the caller can leave its own result untouched.
+    Never raises: the money has already moved by the time this runs, and a
+    courier that will not answer must not turn a successful payment into a failed
+    tool call. A failure comes back as `{"ok": False, "error": …}` for the agent
+    to report alongside the order it did buy.
+    """
+    if location.current() is None:
+        return None
+    if _job.get("jobId"):
+        return None
+
+    try:
+        return dispatch_now(order_number)
+    except Exception as exc:  # noqa: BLE001 — see the docstring
+        return _fail(
+            f"The order is paid, but handing it to the delivery service failed: {exc} "
+            "Report it as bought but without a rider."
+        )
+
+
+@tool
+def arrange_delivery(order_number: str = "", notes: str = "") -> dict:
+    """Hand a paid order to the delivery service — only if it was not already.
+
+    You do not normally need this. A paid take-away order on a delivery errand
+    is handed to the courier automatically, and authorize_payment tells you the
+    job it created. Call this only when that automatic handover reported a
+    failure and you have a reason to think a second attempt would do better, or
+    when you need to send the rider a note.
+
+    This starts a delivery; it does not complete one. A successful call means a
+    courier has the job, not that the food has arrived. Use check_delivery to
+    find out where it has got to, and never report an order as delivered on the
+    strength of this tool succeeding.
+
+    Args:
+        order_number: Defaults to the order placed during this errand.
+        notes: Anything the rider needs — a gate code, "leave at reception".
+
+    Returns:
+        The delivery job: which service has it, its id, its status, and an ETA
+        if the service gave one.
+    """
+    return dispatch_now(order_number, notes)
 
 
 @tool

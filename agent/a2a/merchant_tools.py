@@ -31,6 +31,7 @@ from typing import Any
 from strands import tool
 
 from agent import friends_kitchen_api
+from agent.a2a import delivery as a2a_delivery
 from agent.a2a.protocol import QUOTE, RECEIPT, Artifact, event_artifact
 from agent.a2a.tasks import MerchantTask
 from agent.cart import Cart
@@ -466,6 +467,11 @@ def build_tools(session: MerchantSession) -> list:
             {
                 "orderId": placed["orderId"],
                 "orderNumber": placed["orderNumber"],
+                # Recorded because payment reads it back: a take-away order goes
+                # to a courier the moment it is bought, and a dine-in one does
+                # not. Kept from the argument rather than re-derived later, so
+                # what is delivered is what was actually placed.
+                "orderType": order_type,
                 "paymentMethod": placed["paymentMethod"],
                 "total": summary["total"],
                 "amountDue": summary.get("amountDue") or summary["total"],
@@ -513,8 +519,14 @@ def build_tools(session: MerchantSession) -> list:
         Call this only when the customer's agent has said to. A receipt artifact
         goes out on success.
 
+        A paid take-away order is handed to the delivery agent here, without
+        being asked — you do not arrange it and there is no tool for it. What
+        comes back in `delivery` is the job it created, and it is a delivery
+        *started*, never one completed: the rider is found when the customer asks
+        for one on the delivery board. Say that as it is if you mention it.
+
         Returns:
-            The approval, the amount charged, and the receipt.
+            The approval, the amount charged, and the delivery the order went to.
         """
         if not session.order:
             return _fail("No order has been confirmed yet — call confirm_order first.")
@@ -551,13 +563,31 @@ def build_tools(session: MerchantSession) -> list:
         artifact = session.task.add_artifact(Artifact(name=RECEIPT, data=data))
         session.task.stream.emit(event_artifact(artifact))
 
-        return {
+        paid_result = {
             "ok": True,
             "approved": True,
             "orderNumber": result["orderNumber"],
             "charged": rupees(charged),
             "transactionRef": result.get("transactionRef"),
         }
+
+        # The handover, unasked. Same rule as the errand flow on 8100: a delivery
+        # that depends on an agent remembering to arrange one is a delivery that
+        # goes missing on the run where it forgets. It never raises — see
+        # agent/a2a/delivery.py — so a courier that will not answer leaves a
+        # sentence here rather than undoing a payment that has already gone
+        # through.
+        handover = await a2a_delivery.hand_over(session.order)
+        if handover is not None:
+            paid_result["delivery"] = handover
+            paid_result["next"] = (
+                "The order is paid and the delivery agent has it — say so, and say "
+                "it is not delivered yet."
+                if handover.get("ok")
+                else f"The order is paid. {handover.get('error')} Report both halves plainly."
+            )
+
+        return paid_result
 
     @tool
     async def look_up_order(order_number: str = "") -> dict:

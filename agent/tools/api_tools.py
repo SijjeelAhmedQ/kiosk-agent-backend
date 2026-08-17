@@ -24,7 +24,7 @@ from typing import Any
 
 from strands import tool
 
-from agent import friends_kitchen_api
+from agent import friends_kitchen_api, location
 from agent.cart import cart
 from agent.friends_kitchen_api import FriendsKitchenApiError
 from agent.wallet import BudgetExceeded, money, rupees, wallet
@@ -67,6 +67,25 @@ def _slim_product(product: dict) -> dict:
 
 def _fail(message: str) -> dict:
     return {"ok": False, "error": message}
+
+
+def _auto_deliver(order_number: str) -> dict | None:
+    """Send a paid take-away order to the courier, without being asked to.
+
+    Only take-away: a dine-in order is eaten where it was bought, and a rider
+    sent to collect one is a rider sent for nothing. Everything else this
+    decision needs — whether the errand has a customer location at all — lives
+    in delivery_tools, which returns None when there is nothing to do.
+
+    Imported inside the function on purpose: delivery_tools reads `current_order`
+    from this module, so importing it at the top would be a cycle.
+    """
+    if _order.get("orderType") != "take_away":
+        return None
+
+    from agent.tools import delivery_tools
+
+    return delivery_tools.auto_dispatch(order_number)
 
 
 # --------------------------------------------------------------------------- #
@@ -290,22 +309,45 @@ def place_order(order_type: str = "take_away", payment_method: str = "card") -> 
         {
             "orderId": placed["orderId"],
             "orderNumber": placed["orderNumber"],
+            # Kept because payment reads it back: a take-away order on a
+            # delivery errand goes to a courier the moment it is paid, and that
+            # decision is made from the order's own type rather than from
+            # whatever the agent last said it was doing.
+            "orderType": placed.get("orderType") or order_type,
             "paymentMethod": placed["paymentMethod"],
             "total": summary["total"],
             "amountDue": summary.get("amountDue") or summary["total"],
         }
     )
 
-    return {
+    result = {
         "ok": True,
         "orderNumber": placed["orderNumber"],
         "status": placed["status"],
+        "orderType": _order["orderType"],
         "subtotal": rupees(summary["subtotal"]),
         "tax": rupees(summary["tax"]),
         "total": rupees(summary["total"]),
         "amountDue": rupees(_order["amountDue"]),
         "next": "Apply the coupon with apply_coupon, then call authorize_payment.",
     }
+
+    # Said here, where the order type was chosen, because it is the last moment
+    # the choice can still be corrected: a delivery errand that places a dine-in
+    # order gets no courier, and finding that out at payment is finding it out
+    # too late.
+    if location.current() is not None:
+        result["delivery"] = (
+            "This errand has a customer location, so the paid order will be sent "
+            "to the delivery service automatically — you do not arrange it."
+            if _order["orderType"] == "take_away"
+            else (
+                "This errand has a customer location, but the order was placed as "
+                "dine_in, which is not delivered. Place a take_away order if the "
+                "food is meant to reach the customer."
+            )
+        )
+    return result
 
 
 @tool
@@ -360,9 +402,14 @@ def authorize_payment() -> dict:
     more than the cash limit you were sent with. If it refuses, remove items or
     apply the coupon first — do not try to pay again unchanged.
 
+    On a delivery errand this also hands the paid take-away order to the courier
+    — you do not arrange that yourself. A successful handover is a rider on its
+    way, not food that has arrived.
+
     Returns:
-        The approval, the amount charged in rupees, and what is left in the
-        wallet.
+        The approval, the amount charged in rupees, what is left in the wallet,
+        and on a delivery errand a `delivery` field with the job the courier
+        took — or the reason it could not be handed over.
     """
     if not _order:
         return _fail("No order has been placed yet — call place_order first.")
@@ -391,7 +438,7 @@ def authorize_payment() -> dict:
     wallet.spend(charged)
     _order["amountDue"] = 0
 
-    return {
+    paid = {
         "ok": True,
         "approved": True,
         "orderNumber": result["orderNumber"],
@@ -399,6 +446,23 @@ def authorize_payment() -> dict:
         "transactionRef": result.get("transactionRef"),
         "wallet": wallet.display(),
     }
+
+    # The order is bought, so it can be collected. Handing it over here rather
+    # than leaving it to the agent is what makes delivery a property of a paid
+    # take-away order instead of a step that can be forgotten.
+    delivery = _auto_deliver(paid["orderNumber"])
+    if delivery is not None:
+        paid["delivery"] = delivery
+        paid["next"] = (
+            "The order is paid and a courier has it — use check_delivery for "
+            "where it has got to. It is not delivered until that says so."
+            if delivery.get("ok")
+            else (
+                "The order is paid, but it has no rider: "
+                f"{delivery.get('error')} Report both halves plainly."
+            )
+        )
+    return paid
 
 
 @tool

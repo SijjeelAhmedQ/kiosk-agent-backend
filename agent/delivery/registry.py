@@ -12,12 +12,14 @@ from agent.config import settings
 from agent.delivery.contract import DeliveryProvider
 from agent.delivery.courier_agent import CourierAgentProvider
 from agent.delivery.foodpanda import FoodpandaProvider
+from agent.delivery.mock_foodpanda import MockFoodpandaDeliveryAgent
 
 #: Every provider this build can dispatch through, by config name. Built once —
 #: the objects hold configuration, not per-job state, so one instance each is
 #: right and a second would only be a second thing to keep in step.
 _PROVIDERS: dict[str, DeliveryProvider] = {
     CourierAgentProvider.name: CourierAgentProvider(),
+    MockFoodpandaDeliveryAgent.name: MockFoodpandaDeliveryAgent(),
     FoodpandaProvider.name: FoodpandaProvider(),
 }
 
