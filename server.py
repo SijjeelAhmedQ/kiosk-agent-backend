@@ -29,9 +29,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from agent import friends_kitchen_api
+from agent import branches, friends_kitchen_api, location
 from agent.config import settings
-from agent.tools import api_tools, browser_tools
+from agent.delivery import registry as delivery_registry
+from agent.location import InvalidLocation
+from agent.tools import api_tools, browser_tools, delivery_tools
 from agent.wallet import wallet
 
 app = FastAPI(
@@ -62,6 +64,21 @@ _run_lock = asyncio.Lock()
 # --------------------------------------------------------------------------- #
 # Wire types
 # --------------------------------------------------------------------------- #
+class UserLocationIn(BaseModel):
+    """Where the customer is, as the browser reports it.
+
+    Optional on the run, and its absence is not an error: an errand without a
+    location is the counter order this service has always placed. Its *presence*
+    turns the errand into a delivery.
+    """
+
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    accuracyMeters: float | None = Field(default=None, ge=0)
+    label: str | None = Field(default=None, max_length=200)
+    source: Literal["browser", "manual"] = "browser"
+
+
 class StartRunIn(BaseModel):
     instruction: str = Field(min_length=1, max_length=2000)
     couponCode: str | None = Field(default=None, max_length=40)
@@ -69,6 +86,7 @@ class StartRunIn(BaseModel):
     mode: Literal["api", "browser"] = "api"
     customerId: str | None = Field(default=None, max_length=50)
     headless: bool = True
+    userLocation: UserLocationIn | None = None
 
 
 @dataclass
@@ -243,15 +261,46 @@ async def _drive(run: Run, payload: StartRunIn) -> None:
         run.status = "running"
         run.emit({"type": "status", "status": "running"})
 
-        # Fresh wallet and empty cart — this process outlives any single errand.
+        # Fresh wallet, empty cart, no leftover location or delivery — this
+        # process outlives any single errand, and yesterday's customer must not
+        # receive today's order.
         wallet.reset(payload.couponCode, payload.cashLimit, payload.customerId)
         api_tools.reset()
         browser_tools.reset()
+        delivery_tools.reset()
+        location.reset()
 
         try:
             from agent.friends_kitchen_agent import build_agent
 
-            agent = build_agent(wallet, mode=payload.mode, callback_handler=None)
+            # Validated at the edge, before the model sees anything. A bad fix
+            # becomes a failed run with a sentence, rather than an order placed
+            # at the default branch while the operator believes otherwise.
+            user_location = (
+                location.parse(payload.userLocation.model_dump())
+                if payload.userLocation
+                else None
+            )
+            location.remember(user_location)
+
+            if user_location is not None:
+                branch, distance_km = branches.nearest(user_location)
+                run.emit(
+                    {
+                        "type": "location",
+                        "userLocation": user_location.to_view(),
+                        "restaurant": branch.to_view(),
+                        "distanceKm": distance_km,
+                        "deliveryService": delivery_registry.get().display_name,
+                    }
+                )
+
+            agent = build_agent(
+                wallet,
+                mode=payload.mode,
+                callback_handler=None,
+                deliver_to=user_location,
+            )
 
             if payload.mode == "browser":
                 # Launch before the model starts so a failure here is reported
@@ -302,6 +351,13 @@ async def _drive(run: Run, payload: StartRunIn) -> None:
             run.status = "cancelled"
             run.emit({"type": "status", "status": "cancelled"})
             raise
+        except InvalidLocation as exc:
+            # Its own branch because it is the one failure here that is the
+            # caller's to fix, and `_explain` would only wrap a sentence that
+            # is already written for a person.
+            run.status = "failed"
+            run.error = f"That is not a usable delivery location: {exc}"
+            run.emit({"type": "error", "message": run.error})
         except Exception as exc:
             run.status = "failed"
             run.error = _explain(exc)
@@ -337,7 +393,24 @@ def health() -> dict:
             "model": settings.model_id,
             "friendsKitchenWeb": settings.web_base,
             "busy": _run_lock.locked(),
+            # Which courier a delivery would go to, and whether it could. Never
+            # a credential — the answer is "a key is present", not what it is.
+            "delivery": delivery_registry.describe(),
+            "branches": len(branches.BRANCHES),
         },
+    }
+
+
+@app.get("/api/agent/branches")
+def branch_list() -> dict:
+    """Where the restaurant has counters a courier can collect from.
+
+    The control panel shows these so an operator can see which branch a
+    customer's location resolved to, rather than taking the agent's word for it.
+    """
+    return {
+        "success": True,
+        "data": {"items": [branch.to_view() for branch in branches.BRANCHES]},
     }
 
 

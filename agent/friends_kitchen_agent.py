@@ -13,6 +13,7 @@ import os
 from strands import Agent
 
 from agent.config import settings
+from agent.location import UserLocation
 from agent.prompts import system_prompt
 from agent.wallet import Wallet
 
@@ -206,7 +207,12 @@ def _model():
     )
 
 
-def build_agent(wallet: Wallet, mode: str = "api", callback_handler=None) -> Agent:
+def build_agent(
+    wallet: Wallet,
+    mode: str = "api",
+    callback_handler=None,
+    deliver_to: UserLocation | None = None,
+) -> Agent:
     """Wire up an agent for one errand.
 
     Args:
@@ -215,22 +221,40 @@ def build_agent(wallet: Wallet, mode: str = "api", callback_handler=None) -> Age
             actual website in Chromium.
         callback_handler: Strands streaming callback; None silences the
             built-in printer so the CLI can render its own output.
+        deliver_to: Where the customer is, when the errand is a delivery. None
+            is a counter order and builds exactly the agent this function built
+            before delivery existed — same tools, same brief. The delivery
+            tools are added only when there is somewhere to deliver to, because
+            a tool an errand cannot use is a tool it can waste a step on.
     """
     if mode == "browser":
         from agent.tools.browser_tools import BROWSER_TOOLS
 
-        tools = BROWSER_TOOLS
+        tools = list(BROWSER_TOOLS)
     elif mode == "api":
         from agent.tools.api_tools import API_TOOLS
 
-        tools = API_TOOLS
+        tools = list(API_TOOLS)
     else:
         raise ValueError(f"Unknown mode {mode!r} — expected 'api' or 'browser'.")
+
+    service = "the delivery service"
+    if deliver_to is not None:
+        from agent.delivery import registry
+        from agent.tools.delivery_tools import DELIVERY_TOOLS
+
+        tools += DELIVERY_TOOLS
+        service = registry.get().display_name
 
     return Agent(
         model=_model(),
         tools=tools,
-        system_prompt=system_prompt(wallet, browser_mode=(mode == "browser")),
+        system_prompt=system_prompt(
+            wallet,
+            browser_mode=(mode == "browser"),
+            delivery_to=deliver_to.display() if deliver_to else None,
+            delivery_service=service,
+        ),
         name="friends-kitchen-ordering-agent",
         description="Places orders at Friends Kitchen using a coupon and a cash limit.",
         callback_handler=callback_handler,

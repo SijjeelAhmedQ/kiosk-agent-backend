@@ -41,6 +41,16 @@ def reset() -> None:
     _order.clear()
 
 
+def current_order() -> dict[str, Any]:
+    """The order placed this run, or an empty dict before there is one.
+
+    A read-only copy, for the delivery tools: they need the order number to
+    collect against, and reaching into `_order` from another module would make
+    every field here part of an interface it was never meant to be.
+    """
+    return dict(_order)
+
+
 def _slim_product(product: dict) -> dict:
     """A product as the agent should see it — no artwork, no modifier plumbing."""
     return {

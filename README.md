@@ -155,9 +155,12 @@ deliberate change to those hooks can.
 ```
 run.py                       CLI — parses the errand, fills the wallet, starts the agent
 server.py                    HTTP front door: starts runs, streams them as SSE (for the UI)
+delivery_server.py           The delivery agent — its own service on 8102, with its own card
 agent/
   config.py                  Environment-driven settings
   wallet.py                  The token and the cash ceiling. Enforced, not suggested.
+  location.py                Where the customer is. Validated, then held for the run.
+  branches.py                Which branch serves that location, and where a rider collects
   prompts.py                 The brief the agent is given
   friends_kitchen_agent.py             Strands Agent + Anthropic model assembly
   friends_kitchen_api.py               HTTP client for the Friends Kitchen API
@@ -165,6 +168,12 @@ agent/
   tools/
     api_tools.py             Ordering via REST
     browser_tools.py         Ordering via the website
+    delivery_tools.py        Handing a paid order to a courier, and tracking it
+  delivery/
+    contract.py              The shapes and the interface — the whole A2A boundary
+    courier_agent.py         Friends Kitchen's own delivery agent (the default)
+    foodpanda.py             Foodpanda's courier API
+    registry.py              Which provider this deployment uses
   browser/
     friends_kitchen_driver.py          Playwright page-object for the Friends Kitchen UI
 ```
@@ -178,6 +187,70 @@ next phase cheap.
 **Model.** `claude-opus-5` by default, because ordering is a multi-step tool-use
 loop where a wrong step spends real money. Set `AGENT_MODEL=claude-sonnet-5` in
 `.env` for cheaper demo runs.
+
+---
+
+## Delivery, and the second agent
+
+An errand started **with a customer location** becomes a delivery. One started
+without it is the counter order this agent has always placed — same tools, same
+brief, same result. That is the whole switch:
+
+```
+POST /api/agent/runs
+{ "instruction": "Order one Big Mac", "cashLimit": 3000,
+  "userLocation": { "latitude": 24.81, "longitude": 67.03,
+                    "label": "Flat 3, Clifton", "source": "browser" } }
+```
+
+The flow it produces:
+
+```
+detect location → user_location → nearest branch → order → pay
+                                                            ↓
+        customer  ←──── delivery agent ←──── order + pickup + dropoff
+```
+
+**Where the location lives.** `agent/location.py`, held for the run the way the
+wallet is. It is never passed through the prompt and the delivery tools take no
+coordinate arguments — a model that retyped a latitude could move a delivery a
+hundred kilometres and nothing would look wrong. `parse()` refuses anything that
+is not a place on Earth, including 0°,0°, which is what a device with no fix
+reports.
+
+**Which restaurant.** The Friends Kitchen API has no branch concept, so the
+directory is `FK_BRANCHES` in `.env` and lives in `agent/branches.py`. Blank
+means one branch, which is what the API already assumes.
+
+**The handover is a real network call.** `delivery_server.py` is its own service
+on 8102 with its own agent card at `/.well-known/agent-card.json`, exactly as
+the A2A merchant on 8101 is separate from this server on 8100. It cannot see the
+cart, the wallet or the placed order — only what the request carried.
+
+```bash
+.venv\Scripts\python -m uvicorn delivery_server:app --port 8102
+```
+
+**Adding a courier** is a file in `agent/delivery/` and a line in `registry.py`.
+Everything upstream speaks `DeliveryRequest`; only the provider has heard of
+`pickup_contact`. `DELIVERY_PROVIDER` picks one — `internal` (no credentials) or
+`foodpanda` (`FOODPANDA_API_KEY`, read on this server, never returned by a tool).
+
+### Sent is not delivered
+
+The one thing this flow will not do is call an order delivered because the
+dispatch succeeded:
+
+- `arrange_delivery` returns `status: "requested"` and `delivered: false`. The
+  tool's docstring, the system prompt and the agent card all say so separately.
+- `DeliveryJob.delivered` is true for exactly one status. A courier reporting a
+  word we do not recognise maps to `unknown`, never to `delivered`.
+- `POST /api/delivery/jobs` never returns `delivered`; a job reaches it only
+  after the journey has actually elapsed.
+
+The in-house courier dispatches to a **simulated** rider — it is not driving a
+vehicle. What it does not do is fake the outcome: it refuses what it cannot
+honour, and it reports arrival only when the full journey is done.
 
 ---
 
@@ -196,6 +269,13 @@ These are enforced in code, not asked for in the prompt:
 - **Agent orders are identifiable.** Every order and redemption carries
   `X-Terminal-Id: agent-01` (configurable), so the admin screens can tell agent
   traffic from walk-in traffic.
+- **An unpaid order cannot be sent for delivery.** `arrange_delivery` re-reads
+  the order from the restaurant and checks the status *and* the payment ledger
+  before dispatching. The delivery agent checks again on its own side.
+- **One order cannot get two riders.** A second `arrange_delivery` in the same
+  run is refused with the job id of the first.
+- **A failed courier cannot lose an order.** Every delivery failure leaves the
+  order placed and paid, and says so — the ordering half is untouched by it.
 
 ---
 
@@ -209,6 +289,16 @@ check the tools themselves:
 | API: browse → add ×2 → coupon → order → redeem → pay | Order **249**, Rs 1500 coupon redeemed, Rs 685 charged, status `paid` |
 | Browser: splash → menu → search → add ×2 → checkout → coupon → pay | Order **252**, Rs 1200 coupon redeemed, Rs 985 charged via the real UI |
 | Budget guardrail: 2-burger order, Rs 500 limit, no coupon | Payment refused, order **250** left unpaid, `cashSpent` stayed `0` |
+
+And with the model in the loop, for the delivery flow:
+
+| Flow | Result |
+|---|---|
+| Delivery: locate → order → pay → hand over | Order **333** paid Rs 610, job `fkd_cbdf…` at `requested`, reached `delivered` on its own clock |
+| Coupon **and** delivery together | Order **336**, coupon covered Rs 610, `cashSpent` stayed `0`, dispatched to "Office, Gulshan" |
+| Counter order (no location) | Order **335**, coupon redeemed — no location event, no delivery tools offered, tool sequence unchanged |
+| Courier offline mid-errand | Order **337** still placed and paid; agent did not retry and reported "no rider" rather than delivery |
+| Unpaid order offered for delivery | Refused on both sides — `arrange_delivery` and the delivery agent |
 
 ---
 

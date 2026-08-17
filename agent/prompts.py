@@ -86,6 +86,40 @@ You are carrying coupon **{code}** and no cash at all. The coupon must cover the
 entire order. If it does not, do not place an order you cannot pay for — stop
 and report what the shortfall is."""
 
+DELIVERY_NOTE = """\
+
+# This one is a delivery
+
+The customer is not standing at the counter — they are at {where}, and the food
+has to reach them. That adds two things to the errand, one at each end.
+
+**Before you order.** Call check_delivery_location. It tells you which branch
+serves the customer, so the order is placed somewhere a rider can collect it.
+You do not supply the customer's position and you cannot change it: it was
+given to this errand when it started, and the tools read it directly.
+
+**After you have paid.** Call arrange_delivery. It hands the paid order to
+{service}, who collect it from the restaurant and take it to the customer.
+
+Order the food first and pay for it, exactly as you always do. Delivery is
+arranged against an order that is already bought — arrange_delivery re-reads
+the order from the restaurant and refuses anything still owing.
+
+## What "delivered" means
+
+arrange_delivery starts a delivery. It does not complete one. A successful call
+means a courier has accepted the job, and the food is still at the restaurant.
+
+So: do not tell the customer their order has arrived because arrange_delivery
+succeeded. Say it has been handed to {service} and is on its way. If you want to
+know where it has got to, call check_delivery — and only the status `delivered`
+means it is actually with them.
+
+If delivery cannot be arranged at all, the order is still bought and paid for.
+Report both halves plainly: what you ordered and paid, and that it has no rider.
+Do not place a second order, and do not retry a refusal unchanged.
+"""
+
 BROWSER_NOTE = """\
 
 # You are using the website, not an API
@@ -97,7 +131,24 @@ you expected, look at the page again rather than repeating the tap.
 """
 
 
-def system_prompt(wallet: Wallet, browser_mode: bool = False) -> str:
+def system_prompt(
+    wallet: Wallet,
+    browser_mode: bool = False,
+    delivery_to: str | None = None,
+    delivery_service: str = "the delivery service",
+) -> str:
+    """The agent's brief for one errand.
+
+    Args:
+        wallet: The coupon and cash ceiling this run is allowed to use.
+        browser_mode: Driving the real website rather than the API.
+        delivery_to: Where the customer is, in words — or None for a counter
+            order, which leaves the brief exactly as it was before delivery
+            existed. An errand with nowhere to deliver to should not be told
+            about a step it has no tools for.
+        delivery_service: Who is carrying it, named so the agent can tell the
+            customer who has their food.
+    """
     if wallet.coupon_code and wallet.spend_limit > 0:
         brief = WITH_COUPON.format(
             code=wallet.coupon_code, limit=rupees(wallet.spend_limit)
@@ -110,4 +161,6 @@ def system_prompt(wallet: Wallet, browser_mode: bool = False) -> str:
     prompt = BASE.format(wallet_brief=brief)
     if browser_mode:
         prompt += BROWSER_NOTE
+    if delivery_to:
+        prompt += DELIVERY_NOTE.format(where=delivery_to, service=delivery_service)
     return prompt

@@ -96,6 +96,35 @@ class Settings:
     # what `high` is tuned for; `low` is enough for the happy path.
     effort: str = _env("AGENT_EFFORT", "high")
 
+    # --- The branches ------------------------------------------------------ #
+    # A JSON list of the restaurant's locations, which is what turns a
+    # customer's coordinates into a place a courier can collect from. The
+    # restaurant's own API has no branch concept, so this lives here:
+    #   [{"id":"fk-clifton","name":"Friends Kitchen Clifton",
+    #     "address":"…","latitude":24.81,"longitude":67.03,"phone":"…"}]
+    # Blank means one branch, which is what the API already assumes.
+    branches_json: str = _env("FK_BRANCHES", "")
+
+    # --- Delivery ---------------------------------------------------------- #
+    # Which delivery agent to hand a paid order to: internal | foodpanda.
+    # The in-house courier needs no credentials, so it is the default and the
+    # fallback — see agent/delivery/registry.py.
+    delivery_provider: str = _env("DELIVERY_PROVIDER", "internal")
+
+    # Where the in-house delivery agent listens (delivery_server.py). Its own
+    # process on its own port, like the A2A merchant on 8101 — which is what
+    # makes the handover a real agent-to-agent call rather than a function one.
+    delivery_base: str = _env("DELIVERY_BASE_URL", "http://localhost:8102")
+
+    # Foodpanda's courier API. The key is FOODPANDA_API_KEY, read from the
+    # environment at call time and never returned by a tool.
+    foodpanda_base: str = _env("FOODPANDA_API_BASE", "")
+
+    # Couriers are slower to answer than the restaurant is, and a dispatch that
+    # times out leaves an order paid but unassigned — so this is its own number
+    # rather than sharing FK_HTTP_TIMEOUT.
+    delivery_timeout: float = float(_env("DELIVERY_TIMEOUT", "15"))
+
     # --- Limits ------------------------------------------------------------ #
     http_timeout: float = float(_env("FK_HTTP_TIMEOUT", "20"))
     max_agent_steps: int = int(_env("AGENT_MAX_STEPS", "40"))
