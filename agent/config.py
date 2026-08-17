@@ -38,6 +38,11 @@ _DEFAULT_MODEL: dict[str, str] = {
     # for the same reason — it is the open-weight one that gets tool calls right.
     # Pin a specific backend by appending it: `openai/gpt-oss-120b:groq`.
     "huggingface": "openai/gpt-oss-120b",
+    # OpenRouter is a router too, so its ids are `org/model` like the Hub's.
+    # Same model as the groq and huggingface defaults, and for the same reason:
+    # it is the open-weight one measured to get tool calls right every time.
+    # Append `:free` to use the free-tier routing of a model where one exists.
+    "openrouter": "openai/gpt-oss-120b",
     # Small enough to run on a laptop, and one of the better local tool-callers.
     "ollama": "qwen3:8b",
 }
@@ -55,10 +60,11 @@ class Settings:
     terminal_id: str = _env("FK_TERMINAL_ID", "agent-01")
 
     # --- The brain --------------------------------------------------------- #
-    # anthropic | gemini | openai | groq | huggingface | ollama. Strands is
-    # model-agnostic, so this is a config choice: gemini, groq and huggingface
-    # have free tiers and ollama runs locally for nothing, which is what makes a
-    # no-cost demo possible.
+    # anthropic | gemini | openai | groq | huggingface | openrouter | ollama.
+    # Strands is model-agnostic, so this is a config choice: gemini, groq and
+    # huggingface have free tiers, openrouter fronts free-tier models of its
+    # own, and ollama runs locally for nothing — which is what makes a no-cost
+    # demo possible.
     provider: str = _env("AGENT_PROVIDER", "anthropic").lower()
 
     # Opus 5 is the default because ordering is a multi-step tool-use loop and
@@ -80,6 +86,11 @@ class Settings:
     # Hugging Face's Inference Providers router is OpenAI-compatible too, so it
     # is the same client again with a third base URL.
     hf_base_url: str = _env("HF_BASE_URL", "https://router.huggingface.co/v1")
+
+    # OpenRouter is OpenAI-compatible as well — the same client, a fourth base
+    # URL. One key reaches every vendor it fronts, which is why both A2A agents
+    # can sit on it without either needing a second account.
+    openrouter_base_url: str = _env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 
     # low | medium | high | xhigh | max. Ordering is agentic tool-use, which is
     # what `high` is tuned for; `low` is enough for the happy path.

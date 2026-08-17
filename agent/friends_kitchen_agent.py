@@ -60,14 +60,20 @@ def credentials_ready() -> tuple[bool, str | None]:
                 "'Make calls to Inference Providers' permission) and put it in "
                 "friends-kitchen-agent-backend/.env."
             )
+    elif settings.provider == "openrouter":
+        if not os.getenv("OPENROUTER_API_KEY", "").strip():
+            return False, (
+                "OPENROUTER_API_KEY is not set. Get a key at "
+                "https://openrouter.ai/keys and put it in friends-kitchen-agent-backend/.env."
+            )
     elif settings.provider == "ollama":
         # Nothing to check — a local Ollama needs no key. If the daemon is down
         # the first tool call fails with a connection error, which says so.
         return True, None
     else:
         return False, (
-            f"Unknown AGENT_PROVIDER {settings.provider!r} — "
-            "expected anthropic, gemini, openai, groq, huggingface or ollama."
+            f"Unknown AGENT_PROVIDER {settings.provider!r} — expected anthropic, "
+            "gemini, openai, groq, huggingface, openrouter or ollama."
         )
 
     # A model id left over from another provider is the likeliest mistake when
@@ -76,7 +82,7 @@ def credentials_ready() -> tuple[bool, str | None]:
     # provider needs several — startswith takes a tuple either way. Groq is
     # deliberately absent: it hosts other vendors' open weights, so its ids
     # share no prefix (openai/gpt-oss-120b, llama-3.3-70b-versatile, qwen/…) —
-    # and huggingface is absent for the same reason.
+    # and huggingface and openrouter are absent for the same reason.
     families: dict[str, tuple[str, ...]] = {
         "anthropic": ("claude",),
         "gemini": ("gemini",),
@@ -154,6 +160,23 @@ def _model():
             client_args={
                 "api_key": os.getenv("HF_TOKEN", "").strip(),
                 "base_url": settings.hf_base_url,
+            },
+            model_id=settings.model_id,
+            params={"max_completion_tokens": settings.max_tokens},
+        )
+
+    if settings.provider == "openrouter":
+        from strands.models.openai import OpenAIModel
+
+        # OpenRouter is OpenAI-compatible too, so this is the groq branch again
+        # with a fourth base URL. It routes one id to whichever upstream vendor
+        # is cheapest/available, so AGENT_EFFORT is not forwarded for the same
+        # reason as on the Hugging Face router: whether `reasoning_effort` is
+        # accepted depends on the backend it picked, and a rejected one is a 400.
+        return OpenAIModel(
+            client_args={
+                "api_key": os.getenv("OPENROUTER_API_KEY", "").strip(),
+                "base_url": settings.openrouter_base_url,
             },
             model_id=settings.model_id,
             params={"max_completion_tokens": settings.max_tokens},

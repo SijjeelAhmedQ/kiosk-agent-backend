@@ -21,6 +21,7 @@ _KEY_ENV: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
     "groq": "GROQ_API_KEY",
     "huggingface": "HF_TOKEN",
+    "openrouter": "OPENROUTER_API_KEY",
 }
 
 _WHERE: dict[str, str] = {
@@ -29,12 +30,13 @@ _WHERE: dict[str, str] = {
     "openai": "https://platform.openai.com/api-keys",
     "groq": "https://console.groq.com/keys",
     "huggingface": "https://huggingface.co/settings/tokens",
+    "openrouter": "https://openrouter.ai/keys",
 }
 
 # A model id left over from another provider is the likeliest mistake when
-# switching, and it fails as an opaque 404 from the vendor. Groq and huggingface
-# are absent on purpose: they host other vendors' open weights, so their ids
-# share no prefix.
+# switching, and it fails as an opaque 404 from the vendor. Groq, huggingface
+# and openrouter are absent on purpose: they host or route other vendors'
+# models, so their ids share no prefix.
 _FAMILIES: dict[str, tuple[str, ...]] = {
     "anthropic": ("claude",),
     "gemini": ("gemini",),
@@ -63,7 +65,7 @@ def credentials_ready(provider: str, model_id: str, role: str) -> tuple[bool, st
     if env_name is None:
         return False, (
             f"Unknown {variable} {provider!r} — expected anthropic, gemini, "
-            "openai, groq, huggingface or ollama."
+            "openai, groq, huggingface, openrouter or ollama."
         )
 
     if not os.getenv(env_name, "").strip():
@@ -102,7 +104,7 @@ def build_model(provider: str, model_id: str, max_tokens: int, effort: str = "hi
             params={"max_output_tokens": max_tokens},
         )
 
-    if provider in ("openai", "groq", "huggingface"):
+    if provider in ("openai", "groq", "huggingface", "openrouter"):
         from strands.models.openai import OpenAIModel
 
         client_args = {
@@ -112,11 +114,14 @@ def build_model(provider: str, model_id: str, max_tokens: int, effort: str = "hi
             client_args["base_url"] = base.groq_base_url
         elif provider == "huggingface":
             client_args["base_url"] = base.hf_base_url
+        elif provider == "openrouter":
+            client_args["base_url"] = base.openrouter_base_url
 
         # Effort is deliberately not forwarded to any of them: OpenAI's
         # reasoning_effort has no equivalent of our xhigh/max, Groq takes it
-        # only on some models and 400s on the rest, and on the Hugging Face
-        # router whether it is accepted depends on the backend it picked.
+        # only on some models and 400s on the rest, and on the Hugging Face and
+        # OpenRouter routers whether it is accepted depends on the backend they
+        # picked.
         return OpenAIModel(
             client_args=client_args,
             model_id=model_id,
