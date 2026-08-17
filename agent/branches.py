@@ -46,14 +46,14 @@ class Branch:
 
 
 # The single branch, for the common case where nobody has configured a list.
-# The coordinates are Karachi's city centre and are a placeholder — set
-# FK_BRANCHES in .env with real ones before pointing this at a real courier.
+# This is where a courier actually collects: Saddar, Rawalpindi. Override with
+# FK_BRANCHES in .env if the restaurant ever has more than one counter.
 _FALLBACK = Branch(
-    id="fk-main",
-    name="Friends Kitchen",
-    address="Friends Kitchen, Karachi",
-    latitude=24.8607,
-    longitude=67.0011,
+    id="fk-saddar",
+    name="Friends Kitchen Saddar",
+    address="Friends Kitchen, Saddar, Rawalpindi",
+    latitude=33.598827,
+    longitude=73.053810,
     phone=None,
 )
 

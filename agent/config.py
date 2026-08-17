@@ -100,9 +100,10 @@ class Settings:
     # A JSON list of the restaurant's locations, which is what turns a
     # customer's coordinates into a place a courier can collect from. The
     # restaurant's own API has no branch concept, so this lives here:
-    #   [{"id":"fk-clifton","name":"Friends Kitchen Clifton",
-    #     "address":"…","latitude":24.81,"longitude":67.03,"phone":"…"}]
-    # Blank means one branch, which is what the API already assumes.
+    #   [{"id":"fk-saddar","name":"Friends Kitchen Saddar",
+    #     "address":"…","latitude":33.598827,"longitude":73.053810,"phone":"…"}]
+    # Blank means one branch — Saddar, Rawalpindi, see agent/branches.py — which
+    # is what the API already assumes.
     branches_json: str = _env("FK_BRANCHES", "")
 
     # --- The customer's own address ---------------------------------------- #
@@ -113,15 +114,16 @@ class Settings:
     #
     # It is configuration rather than a literal in the code because it is one
     # person's street: change these three variables and nothing else moves.
-    # The coordinates are the address's approximate fix in Karachi — they decide
-    # which branch collects and how far the rider is told to go, so set them
-    # properly before pointing this at a courier that charges by the kilometre.
+    # The coordinates are the address's fix in Westridge, Rawalpindi — they
+    # decide which branch collects and how far the rider is told to go, so keep
+    # them in step with the street below if the address ever changes.
     customer_address: str = _env(
         "FK_CUSTOMER_ADDRESS",
-        "Shabbir Lane, Street No 6 East, opposite Malik Car Parking",
+        "Shabbir Lane, Street No 6 East, opposite Malik Car Parking, "
+        "Westridge, Rawalpindi",
     )
-    customer_latitude: float = float(_env("FK_CUSTOMER_LAT", "24.8760"))
-    customer_longitude: float = float(_env("FK_CUSTOMER_LON", "67.0300"))
+    customer_latitude: float = float(_env("FK_CUSTOMER_LAT", "33.5875"))
+    customer_longitude: float = float(_env("FK_CUSTOMER_LON", "72.9950"))
 
     # --- Delivery ---------------------------------------------------------- #
     # Which delivery agent to hand a paid order to:

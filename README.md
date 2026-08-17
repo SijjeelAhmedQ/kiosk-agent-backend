@@ -216,8 +216,8 @@ brief, same result. That is the whole switch:
 ```
 POST /api/agent/runs
 { "instruction": "Order one Big Mac", "cashLimit": 3000,
-  "userLocation": { "latitude": 24.81, "longitude": 67.03,
-                    "label": "Flat 3, Clifton", "source": "browser" } }
+  "userLocation": { "latitude": 33.5875, "longitude": 72.9950,
+                    "label": "Flat 3, Westridge", "source": "browser" } }
 ```
 
 The flow it produces:
@@ -406,7 +406,7 @@ And with the model in the loop, for the delivery flow:
 | Flow | Result |
 |---|---|
 | Delivery: locate → order → pay → hand over | Order **333** paid Rs 610, job `fkd_cbdf…` at `requested`, reached `delivered` on its own clock |
-| Coupon **and** delivery together | Order **336**, coupon covered Rs 610, `cashSpent` stayed `0`, dispatched to "Office, Gulshan" |
+| Coupon **and** delivery together | Order **336**, coupon covered Rs 610, `cashSpent` stayed `0`, dispatched to "Office, Westridge" |
 | Counter order (no location) | Order **335**, coupon redeemed — no location event, no delivery tools offered, tool sequence unchanged |
 | Courier offline mid-errand | Order **337** still placed and paid; agent did not retry and reported "no rider" rather than delivery |
 | Unpaid order offered for delivery | Refused on both sides — `arrange_delivery` and the delivery agent |
