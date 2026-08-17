@@ -577,7 +577,9 @@ def build_tools(session: MerchantSession) -> list:
         # agent/a2a/delivery.py — so a courier that will not answer leaves a
         # sentence here rather than undoing a payment that has already gone
         # through.
-        handover = await a2a_delivery.hand_over(session.order)
+        # The buyer id goes with it: it is how the drop the operator chose is
+        # found, and the merchant never learns the address itself.
+        handover = await a2a_delivery.hand_over(session.order, session.task.buyer_id)
         if handover is not None:
             paid_result["delivery"] = handover
             paid_result["next"] = (

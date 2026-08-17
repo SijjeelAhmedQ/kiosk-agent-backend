@@ -64,11 +64,18 @@ class MerchantConnection:
     is to ask a language model to remember it.
     """
 
-    def __init__(self, base_url: str | None = None) -> None:
+    def __init__(self, base_url: str | None = None, buyer_id: str | None = None) -> None:
         self.base_url = (base_url or a2a_settings.public_base).rstrip("/")
         self.card: dict[str, Any] | None = None
         self.endpoint: str | None = None
         self.task_id: str | None = None
+
+        # Who is buying, named on the conversation the buyer opens. The console
+        # sets it to the run id, which is what lets the merchant's side find the
+        # run that started it — see `agent/a2a/delivery.py` for the one thing it
+        # looks up there. Nothing about the errand travels in it: it is an
+        # opaque id, and the drop it leads to never crosses the wire.
+        self.buyer_id = buyer_id
 
     async def discover(self) -> dict[str, Any]:
         """Fetch the agent card and remember where it says to send messages.
@@ -117,7 +124,7 @@ class MerchantConnection:
             {
                 "message": message,
                 "data": data,
-                "buyerId": buyer_id,
+                "buyerId": buyer_id or self.buyer_id,
                 "messageId": message_id,
             },
         )

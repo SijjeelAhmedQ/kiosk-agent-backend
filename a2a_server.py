@@ -31,7 +31,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
-from agent import friends_kitchen_api
+from agent import friends_kitchen_api, location
 from agent.a2a import tasks as store
 from agent.a2a.buyer_agent import run_errand
 from agent.a2a.config import a2a_settings
@@ -128,6 +128,13 @@ def health() -> dict:
                 "problem": merchant_problem,
             },
             "busy": _browser_lock.locked(),
+            # The customer's saved address, so the console's "Where it goes" can
+            # offer "deliver to my address" as one click rather than a permission
+            # prompt — and so that the same address the handover falls back to is
+            # the one shown on screen. Served from here rather than written into
+            # the UI so there is one copy of it: change FK_CUSTOMER_ADDRESS and
+            # both consoles follow.
+            "customer": location.saved().to_view(),
         }
     )
 
@@ -296,7 +303,16 @@ async def start_run(payload: StartRunIn) -> dict:
             ),
         )
 
-    run = ConsoleRun(instruction=payload.instruction)
+    # Validated at the edge, before a run exists to carry it. A swapped latitude
+    # and longitude is a delivery to the wrong hemisphere, so a fix that is not a
+    # place on Earth is a 422 here rather than an address the operator believes in
+    # and a courier is sent to.
+    try:
+        drop = location.parse(payload.userLocation.model_dump()) if payload.userLocation else None
+    except location.InvalidLocation as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    run = ConsoleRun(instruction=payload.instruction, drop=drop)
     store.console_runs.put(run.id, run)
     run.stream.emit(event_status("queued"))
     run.task = asyncio.create_task(_drive(run, payload))

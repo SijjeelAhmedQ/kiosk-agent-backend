@@ -257,8 +257,11 @@ it, because neither has a browser to ask:
 - the errand console offers it as one click, which is what turning the *Where it
   goes* switch on now fills in — a street a rider can read instead of a
   permission prompt and five decimal places;
-- the **A2A negotiation has no location UI at all**, so a paid take-away order
-  there goes to the saved address. See `agent/a2a/delivery.py`.
+- the **A2A console has the same switch**, and a paid take-away order there goes
+  to the saved address whenever nobody flips it. The drop it names never enters
+  the negotiation: it is held on the console run, and the merchant's handover
+  reads it back from the `buyerId` the conversation was opened with — coordinates
+  in a message are coordinates a model can retype. See `agent/a2a/delivery.py`.
 
 A run that carries its own fix uses that one. The saved address is the fallback,
 never an override.
@@ -411,7 +414,7 @@ And with the model in the loop, for the delivery flow:
 | Courier offline mid-errand | Order **337** still placed and paid; agent did not retry and reported "no rider" rather than delivery |
 | Unpaid order offered for delivery | Refused on both sides — `arrange_delivery` and the delivery agent |
 | Errand agent → the dispatcher agent on 8103 | Order **356** paid Rs 610, on the board at `accepted` awaiting a rider; rider Bilal Rehman, then `delivered` to the saved address |
-| A2A negotiation → the same board | Order **357** paid Rs 610, dispatched to the saved address with no location UI anywhere in the flow |
+| A2A negotiation → the same board | Order **357** paid Rs 610, dispatched to the saved address — no drop named, so the fallback carried it |
 | Gated steps, by hand | Held at `accepted` until `find-rider`, then at `picked_up` until `deliver`; `delivered` only after both legs elapsed (70.4s) |
 | Repeat request on a finished job | `409` — a page left open cannot send a rider to a delivered order |
 

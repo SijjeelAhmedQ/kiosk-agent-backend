@@ -33,6 +33,7 @@ from agent.a2a.protocol import (
     Message,
     event_end,
 )
+from agent.location import UserLocation
 
 
 class Stream:
@@ -173,6 +174,14 @@ class ConsoleRun:
     wallet: dict[str, Any] = field(default_factory=dict)
     stream: Stream = field(default_factory=Stream)
     task: asyncio.Task | None = None
+
+    # Where this errand's delivery goes, when the console named a drop. Held on
+    # the run rather than in a module-level singleton the way the errand flow on
+    # 8100 holds its location: with API hands two negotiations may overlap in
+    # this process, and one shared address between them is how the second
+    # customer receives the first one's dinner. None means "wherever the service
+    # delivers to by default" — see `agent/a2a/delivery.py`.
+    drop: UserLocation | None = None
 
     def to_wire(self) -> dict[str, Any]:
         return {

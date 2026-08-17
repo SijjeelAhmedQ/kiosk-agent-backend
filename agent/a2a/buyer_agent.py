@@ -55,7 +55,13 @@ async def run_errand(run: ConsoleRun, payload) -> None:
     wallet.reset(payload.couponCode, payload.cashLimit, payload.customerId)
     run.wallet = wallet.summary()
 
-    session = BuyerSession(run=run, wallet=wallet, merchant=MerchantConnection())
+    # The connection carries the run's id as the buyer id, so the conversation it
+    # opens can be traced back to the errand that started it. The merchant's
+    # handover is the one place that matters: it reads the drop off this run
+    # rather than being told an address in a message.
+    session = BuyerSession(
+        run=run, wallet=wallet, merchant=MerchantConnection(buyer_id=run.id)
+    )
 
     try:
         ready, problem = credentials_ready(

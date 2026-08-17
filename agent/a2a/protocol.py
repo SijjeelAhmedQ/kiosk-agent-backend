@@ -178,6 +178,23 @@ class MerchantMessageIn(BaseModel):
     messageId: str | None = Field(default=None, max_length=64)
 
 
+class UserLocationIn(BaseModel):
+    """Where the customer is, as the console reports it.
+
+    The same shape the errand flow takes on 8100, so an operator filling in
+    "Where it goes" on either console is filling in one field. It is *not* part
+    of the A2A protocol and it never reaches the merchant as a message: this is
+    the console telling the service where its own customer is, and the drop is
+    read again at handover from the run that carried it.
+    """
+
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    accuracyMeters: float | None = Field(default=None, ge=0)
+    label: str | None = Field(default=None, max_length=200)
+    source: Literal["browser", "manual"] = "browser"
+
+
 class StartRunIn(BaseModel):
     """The console sending the buyer out on an errand.
 
@@ -190,6 +207,13 @@ class StartRunIn(BaseModel):
     couponCode: str | None = Field(default=None, max_length=40)
     cashLimit: float = Field(default=0, ge=0, le=1_000_000)
     customerId: str | None = Field(default=None, max_length=50)
+
+    # Where a paid take-away order should be delivered. Absent is not an error
+    # and never was: this flow has always dispatched to the customer's saved
+    # address, and it still does when the console sends none. What the field
+    # buys is the errand that goes somewhere else — an office, a hotel, a friend
+    # — which until now could not be asked for from this console at all.
+    userLocation: UserLocationIn | None = None
 
 
 # --------------------------------------------------------------------------- #
