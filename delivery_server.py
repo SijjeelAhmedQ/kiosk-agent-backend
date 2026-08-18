@@ -1,6 +1,10 @@
 """The delivery agent — the second half of `order → deliver`.
 
+    .venv\\Scripts\\python delivery_server.py
     .venv\\Scripts\\python -m uvicorn delivery_server:app --port 8102 --reload
+
+Either way it answers on 8102 — running the file needs no port because the
+port is not a choice this service leaves open; see `PORT` at the bottom.
 
 Its own app on its own port, for the same reason the A2A merchant on 8101 is
 not inside the errand server on 8100: the ordering agent reaches this over real
@@ -372,3 +376,21 @@ def list_jobs() -> dict:
     """Everything this agent is carrying, newest first."""
     jobs = sorted(_jobs.values(), key=lambda job: job.created, reverse=True)
     return _ok({"items": [job.to_view() for job in jobs]})
+
+
+# --------------------------------------------------------------------------- #
+# The port
+# --------------------------------------------------------------------------- #
+#: 8102, and not read from anywhere. The ordering side reaches this service at
+#: `DELIVERY_BASE_URL`, which names 8102; `agent/config.py`, the README and the
+#: courier provider in `agent/delivery/courier_agent.py` all name 8102 too. A
+#: courier that came up on uvicorn's default 8000 is therefore one no paid order
+#: can reach — the order is placed and charged and nothing carries it, which is
+#: the worst failure this system has. One number, in one place, spares it.
+PORT = 8102
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("delivery_server:app", host="0.0.0.0", port=PORT, reload=True)

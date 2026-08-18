@@ -284,7 +284,7 @@ the A2A merchant on 8101 is separate from this server on 8100. It cannot see the
 cart, the wallet or the placed order — only what the request carried.
 
 ```bash
-.venv\Scripts\python -m uvicorn delivery_server:app --port 8102
+.venv\Scripts\python delivery_server.py   # always 8102 — the port is fixed in the file
 ```
 
 **Adding a courier** is a file in `agent/delivery/` and a line in `registry.py`.
