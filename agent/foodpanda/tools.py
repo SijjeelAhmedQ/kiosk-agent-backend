@@ -95,13 +95,26 @@ def build_tools(job: DeliveryJob) -> list:
             "distanceKm": distance,
             "notes": job.notes,
             "quotedFee": job.quote,
+            # Whether the customer has already asked for this to be brought to
+            # them. It changes nothing you decide — only whether the last step
+            # stops to ask. Reported so a dispatcher reading a job that never
+            # waited can see why it did not.
+            "deliverToMe": job.where_it_goes,
             # What has already been settled, so the dispatcher spends its
             # judgement on the one question that is actually open.
             "alreadyChecked": [
                 "The order is paid — this service refuses unpaid ones at the door.",
                 "The order has at least one item on it.",
                 "Both ends of the journey are real coordinates with an address.",
-            ],
+            ]
+            + (
+                [
+                    "The customer asked for this to be delivered to them when they "
+                    "ordered, so deliver_to_customer will not wait to be asked again."
+                ]
+                if job.where_it_goes
+                else []
+            ),
             "toDecide": (
                 f"Whether this is deliverable. Our service radius is "
                 f"{fp.service_radius_km:g} km"
@@ -269,6 +282,11 @@ def build_tools(job: DeliveryJob) -> list:
         compressed but real — this tool returning successfully is the only thing
         in this service that can mark an order delivered.
 
+        If the request came in with the customer's "deliver it to me" on it, that
+        wait is already over before you call this and it returns without pausing.
+        That is not a fault and it is not a shortcut: they were asked once, by
+        the agent that took their order, and this is their answer arriving early.
+
         Returns:
             The completed job.
         """
@@ -278,6 +296,10 @@ def build_tools(job: DeliveryJob) -> list:
                 "to deliver until it has been collected from the restaurant."
             )
 
+        # Returns immediately when the customer already asked for the delivery:
+        # the gate was opened when the request landed, and `wait_for` treats a
+        # gate that is already open as a yes that came in early — which is what
+        # it is. Nothing here is skipped; the ride below still happens.
         refusal = await _wait_for_operator(
             job,
             store.DELIVERY,

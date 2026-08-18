@@ -312,7 +312,14 @@ async def start_run(payload: StartRunIn) -> dict:
     except location.InvalidLocation as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
 
-    run = ConsoleRun(instruction=payload.instruction, drop=drop)
+    run = ConsoleRun(
+        instruction=payload.instruction,
+        drop=drop,
+        # The switch, not the address. `drop` is where it goes; this is whether
+        # the customer asked for it to come to them — and it is what stops the
+        # delivery agent asking them again at the far end of the handover.
+        where_it_goes=payload.whereItGoes,
+    )
     store.console_runs.put(run.id, run)
     run.stream.emit(event_status("queued"))
     run.task = asyncio.create_task(_drive(run, payload))

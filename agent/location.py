@@ -186,11 +186,33 @@ def saved() -> UserLocation:
 # handing them back to a tool that has to trust them.
 _current: UserLocation | None = None
 
+# Did the customer ask for this errand to be brought to them?
+#
+# Held next to the location and not inside it, because the two are different
+# questions and they come apart. `_current` is *where* the order goes — and on
+# this service it now always goes somewhere, since a take-away order handed to a
+# courier has to. This is whether the customer said "deliver it to me", which is
+# the consent the delivery agent otherwise stops and asks for on its own board
+# with the rider already holding the food.
+#
+# False is not "do not deliver". It is "nobody answered that here", and it
+# leaves the delivery agent to ask, which is what it has always done.
+_where_it_goes: bool = False
 
-def remember(location: UserLocation | None) -> None:
-    """Set the location for the run about to start. None clears it."""
-    global _current
+
+def remember(location: UserLocation | None, where_it_goes: bool = False) -> None:
+    """Set the location and the consent for the run about to start.
+
+    Args:
+        location: Where the order goes. None clears it.
+        where_it_goes: Did the customer ask for it to be brought to them?
+            Defaults to False — no consent recorded — which is what every caller
+            written before the switch existed passes, and it makes the delivery
+            agent ask.
+    """
+    global _current, _where_it_goes
     _current = location
+    _where_it_goes = where_it_goes
 
 
 def current() -> UserLocation | None:
@@ -198,11 +220,20 @@ def current() -> UserLocation | None:
     return _current
 
 
+def consented() -> bool:
+    """Did the customer ask for this errand to be delivered to them?
+
+    Read at the handover and sent across with the request, so the delivery agent
+    does not put a question to somebody who has already answered it.
+    """
+    return _where_it_goes
+
+
 def reset() -> None:
-    """Forget the previous errand's location.
+    """Forget the previous errand's location and consent.
 
     Called at the top of every run for the same reason the wallet is reset: the
     server outlives any single errand, and yesterday's customer must not receive
-    today's order.
+    today's order — nor yesterday's answer to a question about it.
     """
     remember(None)

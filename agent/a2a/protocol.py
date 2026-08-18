@@ -33,7 +33,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from agent.a2a.config import a2a_settings
 
@@ -214,6 +214,22 @@ class StartRunIn(BaseModel):
     # buys is the errand that goes somewhere else — an office, a hotel, a friend
     # — which until now could not be asked for from this console at all.
     userLocation: UserLocationIn | None = None
+
+    # The operator's "Where it goes" switch, as an answer rather than as an
+    # address: true means the customer has asked for this order to be brought to
+    # them, and that is the consent the delivery agent would otherwise stop and
+    # ask for itself. `userLocation` says *where*; this says *whether they asked*
+    # — two questions the switch answers at once and that come apart the moment
+    # somebody names a drop without wanting it delivered yet.
+    #
+    # False, and the default, is the behaviour this service has always had: the
+    # delivery agent holds the last step and asks. Spelled both ways on the wire
+    # because it crosses to another agent, and a field named after a switch is
+    # the field most likely to be typed the other way round.
+    whereItGoes: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("whereItGoes", "where_it_goes"),
+    )
 
 
 # --------------------------------------------------------------------------- #

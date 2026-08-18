@@ -183,6 +183,14 @@ class ConsoleRun:
     # delivers to by default" — see `agent/a2a/delivery.py`.
     drop: UserLocation | None = None
 
+    # Did the customer ask for this order to be delivered to them? The console's
+    # "Where it goes" switch, carried on the run for the same reason `drop` is:
+    # it belongs to one negotiation, and two overlapping runs must not share one
+    # answer. Read at handover and passed to the delivery agent, which then does
+    # not ask a second time. False — the default — leaves the delivery agent to
+    # ask for itself, which is what it has always done.
+    where_it_goes: bool = False
+
     def to_wire(self) -> dict[str, Any]:
         return {
             "runId": self.id,

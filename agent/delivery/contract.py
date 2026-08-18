@@ -172,6 +172,22 @@ class DeliveryRequest:
     #: and labelled as one wherever it is shown.
     distance_km: float | None = None
 
+    #: The customer has already said "deliver it to me".
+    #:
+    #: The one field on this request that is about consent rather than about
+    #: the parcel. The ordering agent's console asks the question once — its
+    #: "Where it goes" switch — and this carries that answer across, so a
+    #: delivery agent that would otherwise stop and ask the customer whether
+    #: they want the food brought out does not ask a question they have already
+    #: answered.
+    #:
+    #: False is the state this system was in before the field existed: nobody
+    #: has consented here, and a delivery agent that gates the hand-out must
+    #: still ask. It is deliberately not the same as "do not deliver" — an order
+    #: with no consent on it is still a delivery request, it is one whose last
+    #: step waits for a person.
+    where_it_goes: bool = False
+
     def validate(self) -> None:
         """Refuse a request that should not be sent. Raises `DeliveryRejected`.
 
@@ -232,6 +248,11 @@ class DeliveryRequest:
             "branchId": self.branch_id,
             "distanceKm": self.distance_km,
             "notes": self.notes,
+            # camelCase like every other key here, because this is the same wire
+            # format whichever courier is carrying it. The delivery agent also
+            # answers to the snake_case spelling — see `foodpanda_server.JobIn`
+            # — so a caller written against either name is understood.
+            "whereItGoes": self.where_it_goes,
         }
 
 

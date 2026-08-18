@@ -127,6 +127,21 @@ class DeliveryJob:
     distance_km: float | None = None
     notes: str | None = None
 
+    #: The customer already asked for this to be brought to them.
+    #:
+    #: Sent by the ordering agent, off its own console's "Where it goes" switch.
+    #: It answers exactly one question — the one the `delivery` gate below would
+    #: otherwise hold the job to ask: *do you want this delivered to you?* True
+    #: and that gate opens at construction, so the rider is not left standing in
+    #: the restaurant waiting for a person to press a button they already
+    #: pressed. It does not touch the `rider` gate, and it does not let the job
+    #: skip a step: the ride still happens, and `deliver_to_customer` is still
+    #: the only thing that can mark an order delivered.
+    #:
+    #: False means nobody has consented *here* — not that delivery is unwanted —
+    #: and the board is asked, exactly as it was before this field existed.
+    where_it_goes: bool = False
+
     id: str = field(default_factory=lambda: f"fp_{uuid.uuid4().hex[:10]}")
     status: str = REQUESTED
     courier: str | None = None
@@ -160,6 +175,23 @@ class DeliveryJob:
 
     stream: Stream = field(default_factory=Stream)
     task: Any = None  # asyncio.Task, typed loosely to keep asyncio out of here
+
+    def __post_init__(self) -> None:
+        """Open the gate the customer has already opened.
+
+        Consent that arrived with the request is consent, and a gate is nothing
+        more than a record of one. Setting the event here rather than teaching
+        `wait_for` about the flag means every route into that wait behaves the
+        same — including a dispatcher that gets there before the request has
+        finished being read — and it keeps the property that matters: a gate,
+        once open, is never closed again.
+
+        Only the `delivery` gate. Asking for a rider is a separate request about
+        timing rather than about consent, and a customer who said "deliver it to
+        me" has not said "and start now".
+        """
+        if self.where_it_goes:
+            self.gates[DELIVERY].set()
 
     # -- reading it -------------------------------------------------------- #
     @property
@@ -387,6 +419,10 @@ class DeliveryJob:
             "itemCount": self.item_count,
             "distanceKm": self.distance_km,
             "notes": self.notes,
+            # On the view so the board can say why it is not asking. A missing
+            # button is indistinguishable from a broken one unless something
+            # says the question was already answered.
+            "whereItGoes": self.where_it_goes,
             "branchId": self.branch_id,
             "createdAt": self.created_at,
             "timeline": self.timeline,

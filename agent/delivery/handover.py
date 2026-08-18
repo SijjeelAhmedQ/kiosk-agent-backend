@@ -40,6 +40,7 @@ def build_request(
     deliver_to: UserLocation,
     notes: str | None = None,
     order_id_fallback: str = "",
+    where_it_goes: bool = False,
 ) -> DeliveryRequest:
     """Assemble the message from facts, not from what an agent remembers.
 
@@ -48,6 +49,12 @@ def build_request(
         deliver_to: Where the customer is — their own fix, or the saved address.
         notes: Anything the rider needs. Free text from the customer.
         order_id_fallback: Used only if the restaurant's own record has no id.
+        where_it_goes: Has the customer already asked for this to be brought to
+            them? The one thing on the request that is not re-derived here, and
+            could not be: consent is something a person said, not a fact about
+            an order, so it is carried from whoever they said it to. Default
+            False — no consent recorded — which is what every caller written
+            before this field sends, and it makes the delivery agent ask.
 
     Raises:
         DeliveryRejected: The order could not be read back, which leaves no
@@ -113,6 +120,7 @@ def build_request(
         notes=notes or None,
         branch_id=branch.id,
         distance_km=distance_km,
+        where_it_goes=where_it_goes,
     )
 
 
@@ -121,6 +129,7 @@ def dispatch(
     deliver_to: UserLocation,
     notes: str | None = None,
     order_id_fallback: str = "",
+    where_it_goes: bool = False,
 ) -> tuple[DeliveryProvider, DeliveryRequest, DeliveryJob]:
     """Build the message and hand it to the configured delivery agent.
 
@@ -133,5 +142,7 @@ def dispatch(
         DeliveryUnavailable: The courier could not be reached, or refused it.
     """
     provider = registry.get()
-    request = build_request(order_number, deliver_to, notes, order_id_fallback)
+    request = build_request(
+        order_number, deliver_to, notes, order_id_fallback, where_it_goes
+    )
     return provider, request, provider.dispatch(request)

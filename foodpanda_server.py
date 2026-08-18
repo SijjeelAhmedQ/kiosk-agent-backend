@@ -35,7 +35,7 @@ import asyncio
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from agent.foodpanda import jobs as store
@@ -120,6 +120,29 @@ class JobIn(BaseModel):
     distanceKm: float | None = Field(default=None, ge=0, le=20_000)
     notes: str | None = Field(default=None, max_length=500)
 
+    #: The customer has already asked for this order to be delivered to them.
+    #:
+    #: The only field on this request that is about a person rather than about a
+    #: parcel, and the only one that changes what this service *asks* rather than
+    #: what it carries. True and the "Deliver it to me" gate is already open when
+    #: the job is created: the ordering agent's own console put that question to
+    #: the customer, and putting it to them twice is not a second safeguard, it
+    #: is a delivery that stalls because nobody expected to be asked again.
+    #:
+    #: Absent reads as False, which is what every caller written before this
+    #: field sends and what a stranger's agent that has never heard of it sends —
+    #: and False is the behaviour this service has always had. Consent can only
+    #: ever remove a question here; it never adds one, and it never moves a job.
+    #:
+    #: Accepted under either spelling. This is a cross-agent boundary and the
+    #: field is named after a switch, so `where_it_goes` — the name the ordering
+    #: agent uses for it internally — is understood as well as the camelCase the
+    #: rest of this wire format uses.
+    whereItGoes: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("whereItGoes", "where_it_goes"),
+    )
+
 
 # --------------------------------------------------------------------------- #
 # Discovery
@@ -200,6 +223,11 @@ def card() -> dict:
                         "step": store.DELIVERY,
                         "waitsAt": store.PICKED_UP,
                         "askAt": f"POST {fp.public_base}/api/foodpanda/jobs/{{jobId}}/deliver",
+                        # The one gate a caller can answer in advance. Send
+                        # `whereItGoes: true` on the job and this step is already
+                        # asked for — for the caller whose own customer said
+                        # "deliver it to me" before the order was even placed.
+                        "preAnsweredBy": "whereItGoes",
                     },
                 ]
                 if fp.require_operator
@@ -305,6 +333,7 @@ async def create_job(payload: JobIn) -> dict:
         branch_id=payload.branchId,
         distance_km=payload.distanceKm,
         notes=payload.notes,
+        where_it_goes=payload.whereItGoes,
     )
     store.jobs.put(job.id, job)
 
@@ -314,12 +343,38 @@ async def create_job(payload: JobIn) -> dict:
     job.timeline.append(
         {
             "status": store.REQUESTED,
-            "message": "Delivery request received from the Friends Kitchen ordering agent.",
+            "message": (
+                "Delivery request received from the Friends Kitchen ordering agent."
+                + (
+                    " The customer has already asked for it to be delivered to them."
+                    if job.where_it_goes
+                    else ""
+                )
+            ),
             "at": job.created_at,
             "elapsedSeconds": 0.0,
         }
     )
     job.stream.emit({"type": "status", **job.timeline[0], "job": job.to_view()})
+
+    # Said on the stream in its own right, not only folded into the line above.
+    # The board's whole account of a delivery is this log, and "why was I never
+    # asked to send it out?" is a question it has to be able to answer months
+    # later — so the consent that answered it is an entry, with a time on it.
+    if job.where_it_goes:
+        job.stream.emit(
+            {
+                "type": "awaiting",
+                "step": None,
+                "message": (
+                    "\"Deliver it to me\" came with the order — the customer asked "
+                    "for this delivery when they placed it, so the dispatcher will "
+                    "not stop to ask again."
+                ),
+                "at": job.created_at,
+                "job": job.to_view(),
+            }
+        )
 
     job.task = asyncio.create_task(dispatch(job))
 

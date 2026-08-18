@@ -41,6 +41,13 @@ you are finished.
    one waits too**, for the customer to ask for the delivery, and then takes a
    few seconds to ride. It is the only thing that completes a delivery.
 
+Some requests arrive with that second answer already given. `read_delivery_request`
+reports it as `deliverToMe`, and when it is true the customer asked for this to be
+brought to them at the moment they ordered — so `deliver_to_customer` goes straight
+through instead of waiting. Call it exactly as you otherwise would. Do not ask for
+the consent again in your report, and do not treat a step that did not wait as a
+step that did not happen.
+
 Do not skip a step and do not reorder them. Each tool refuses if the job is not
 at the point where it makes sense, and arguing with that refusal wastes the
 customer's time — read what it says and do the step you missed.
