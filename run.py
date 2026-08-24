@@ -17,7 +17,7 @@ for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, "reconfigure"):
         stream.reconfigure(encoding="utf-8", errors="replace")
 
-from agent import friends_kitchen_api  # noqa: E402  (after the stream fix, deliberately)
+from agent import friends_kitchen_api, telemetry  # noqa: E402  (after the stream fix, deliberately)
 from agent.config import settings
 from agent.wallet import wallet
 
@@ -83,6 +83,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+
+    # Tracing, if the operator asked for it. No app to instrument here — a CLI
+    # run still produces the agent and httpx spans, which is the whole errand.
+    telemetry.setup("ordering-agent-cli")
 
     wallet.coupon_code = args.coupon
     wallet.spend_limit = args.limit

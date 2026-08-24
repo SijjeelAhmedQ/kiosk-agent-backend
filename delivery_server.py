@@ -38,6 +38,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+# The only thing this service borrows from the ordering side, and it is
+# infrastructure rather than domain: agent/telemetry.py reads two environment
+# variables and installs a tracer. It cannot see the cart, the wallet or the
+# placed order, so the boundary this file's docstring describes still holds.
+from agent import telemetry
+
 app = FastAPI(
     title="Friends Kitchen Delivery Agent",
     version="1.0.0",
@@ -60,6 +66,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Tracing, if the operator asked for it. Off unless FK_OTEL is set, and it never
+# raises — see agent/telemetry.py.
+telemetry.setup("courier", app)
 
 
 def _ok(data: Any) -> dict:
@@ -298,6 +309,8 @@ def health() -> dict:
             "service": "Friends Kitchen Delivery",
             "activeJobs": sum(1 for job in _jobs.values() if job.status != "delivered"),
             "totalJobs": len(_jobs),
+            # Where this process's spans go, if anywhere. Never a credential.
+            "telemetry": telemetry.describe(),
         }
     )
 

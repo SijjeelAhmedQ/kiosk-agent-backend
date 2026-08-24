@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from agent import branches, friends_kitchen_api, location
+from agent import branches, friends_kitchen_api, location, telemetry
 from agent.config import settings
 from agent.delivery import registry as delivery_registry
 from agent.location import InvalidLocation
@@ -56,6 +56,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Tracing, if the operator asked for it. Off unless FK_OTEL is set, and it never
+# raises — see agent/telemetry.py. Called here rather than in a startup hook so
+# httpx is instrumented before any module-level client can be built.
+telemetry.setup("ordering-agent", app)
+
 
 # One errand at a time — see the module docstring.
 _run_lock = asyncio.Lock()
@@ -402,6 +408,10 @@ def health() -> dict:
             # from here rather than written into the UI so there is one copy of
             # it: change FK_CUSTOMER_ADDRESS and the button follows.
             "customer": location.saved().to_view(),
+            # Where this process's spans go, if anywhere. Never a credential:
+            # OTEL_EXPORTER_OTLP_HEADERS usually carries a token, so the answer
+            # is whether headers are set, not what is in them.
+            "telemetry": telemetry.describe(),
         },
     }
 

@@ -38,6 +38,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import AliasChoices, BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from agent import telemetry
 from agent.foodpanda import jobs as store
 from agent.foodpanda.config import foodpanda_settings as fp
 from agent.foodpanda.dispatcher import credentials_ready, dispatch
@@ -71,6 +72,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Tracing, if the operator asked for it. Off unless FK_OTEL is set, and it never
+# raises — see agent/telemetry.py.
+telemetry.setup("foodpanda-dispatcher", app)
 
 
 def _ok(data) -> dict:
@@ -273,6 +279,10 @@ def health() -> dict:
             "operatorSteps": fp.require_operator,
             "activeJobs": len(active),
             "totalJobs": len(store.jobs),
+            # Where this process's spans go, if anywhere. Never a credential:
+            # OTEL_EXPORTER_OTLP_HEADERS usually carries a token, so the answer
+            # is whether headers are set, not what is in them.
+            "telemetry": telemetry.describe(),
         }
     )
 

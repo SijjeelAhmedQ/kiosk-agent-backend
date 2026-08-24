@@ -31,7 +31,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
-from agent import friends_kitchen_api, location
+from agent import friends_kitchen_api, location, telemetry
 from agent.a2a import tasks as store
 from agent.a2a.buyer_agent import run_errand
 from agent.a2a.config import a2a_settings
@@ -74,6 +74,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Tracing, if the operator asked for it. Off unless FK_OTEL is set, and it never
+# raises — see agent/telemetry.py. Called here rather than in a startup hook so
+# httpx is instrumented before any module-level client can be built.
+telemetry.setup("a2a-desk", app)
 
 
 def _ok(data) -> dict:
@@ -135,6 +141,10 @@ def health() -> dict:
             # the UI so there is one copy of it: change FK_CUSTOMER_ADDRESS and
             # both consoles follow.
             "customer": location.saved().to_view(),
+            # Where this process's spans go, if anywhere. Never a credential:
+            # OTEL_EXPORTER_OTLP_HEADERS usually carries a token, so the answer
+            # is whether headers are set, not what is in them.
+            "telemetry": telemetry.describe(),
         }
     )
 

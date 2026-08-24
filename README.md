@@ -177,6 +177,7 @@ agent/
   config.py                  Environment-driven settings
   wallet.py                  The token and the cash ceiling. Enforced, not suggested.
   location.py                Where the customer is. Validated, then held for the run.
+  telemetry.py               OpenTelemetry, off unless FK_OTEL says otherwise
   branches.py                Which branch serves that location, and where a rider collects
   prompts.py                 The brief the agent is given
   friends_kitchen_agent.py             Strands Agent + Anthropic model assembly
@@ -390,6 +391,62 @@ These are enforced in code, not asked for in the prompt:
   refusal comes back beside the charge rather than turning it into an error.
 - **A failed courier cannot lose an order.** Every delivery failure leaves the
   order placed and paid, and says so — the ordering half is untouched by it.
+
+---
+
+## Tracing
+
+Off by default. `FK_OTEL=console` in `.env` prints spans to whichever process
+you started; `FK_OTEL=otlp` sends them to a collector.
+
+```bash
+docker run -d --name jaeger -p 16686:16686 -p 4318:4318 jaegertracing/all-in-one
+```
+
+Then `FK_OTEL=otlp` and open <http://localhost:16686>.
+
+**What it is for.** Four separate processes is the right shape for this system
+and it has one real cost: no single console shows an errand. A run that ends
+"paid, no rider" is spread across three windows and two of them have scrolled.
+Tracing puts it back together — every hop carries a `traceparent`, every service
+continues the trace it was handed, and one errand is one tree:
+
+```
+POST /api/a2a/runs
+  └─ buyer agent turn
+       ├─ tool: talk_to_merchant   → POST /api/a2a/merchant/tasks
+       │    └─ merchant agent turn
+       │         ├─ tool: browse_menu   → GET  /api/v1/products
+       │         └─ tool: take_payment  → POST /api/v1/payments
+       │              └─ POST /api/foodpanda/jobs
+       │                   └─ dispatcher agent turn
+       │                        └─ tool: assign_rider   (the wait, measured)
+       └─ tool: verify_order       → GET  /api/v1/orders/number/357
+```
+
+Three layers make that, and [`agent/telemetry.py`](agent/telemetry.py) sets up all
+three: **Strands** emits the agent spans — the loop, each model call with its
+token counts, each tool call; **httpx** is instrumented so an outbound call is a
+span *and* carries the context onward; **FastAPI** so an inbound request
+continues the trace rather than starting a fresh one. Miss the httpx half and an
+errand is four unrelated traces.
+
+**Each process names itself** — `friends-kitchen-ordering-agent`, `-a2a-desk`,
+`-courier`, `-foodpanda-dispatcher`. Not `OTEL_SERVICE_NAME`, which the SDK would
+normally read: one `.env` configures all four services here, so a name set there
+would label the courier's spans as the ordering agent's. `FK_OTEL_SERVICE_PREFIX`
+renames the fleet at once.
+
+**Nothing here can fail an errand.** A collector that is down, an endpoint typed
+wrong, an exporter that will not import — each is caught, reported through the
+health endpoint's `telemetry` field, and the agent runs untraced. Observability
+that can take the system down is worse than none.
+
+Two routes are deliberately not traced: `/health`, because polling it every 2.5
+seconds would bury the traces you want in the ones you don't, and `**/events`,
+because an SSE span lasts as long as the console stays open and measures the
+operator's attention rather than the agent's work — which is already traced by
+the spans underneath it.
 
 ---
 

@@ -2,7 +2,7 @@
 # anthropic = paid, best tool-calling. gemini = free tier. openai = paid.
 # ollama = fully local. Which one runs is AGENT_PROVIDER in .env, not a code
 # change.
-strands-agents[anthropic,gemini,openai,ollama]>=1.50.0
+strands-agents[anthropic,gemini,openai,ollama,otel]>=1.50.0
 
 # Talking to the Friends Kitchen API.
 httpx>=0.28
@@ -17,3 +17,12 @@ uvicorn[standard]>=0.30
 sse-starlette>=2.1
 
 python-dotenv>=1.0
+
+# Tracing across the four services. Off unless FK_OTEL is set — see
+# agent/telemetry.py — but the packages have to be here either way, because a
+# missing exporter is a startup warning nobody reads rather than an error.
+# The `otel` extra above brings the OTLP exporter; these two are what make the
+# hops connect: httpx carries `traceparent` outward, fastapi reads it inward,
+# and without both an errand is four unrelated traces rather than one.
+opentelemetry-instrumentation-fastapi>=0.51b0
+opentelemetry-instrumentation-httpx>=0.51b0
