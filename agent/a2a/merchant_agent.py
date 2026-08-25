@@ -35,6 +35,7 @@ from agent.a2a.protocol import (
 )
 from agent.a2a.tasks import MerchantTask
 from agent.a2a.trace import run_turn
+from agent.reasoning import DropReasoningContent
 
 
 def _session(task: MerchantTask) -> MerchantSession:
@@ -73,6 +74,7 @@ def _session(task: MerchantTask) -> MerchantSession:
         name="friends-kitchen-ordering-desk",
         description="Takes orders from other agents, quotes them, and gets paid.",
         callback_handler=None,
+        hooks=[DropReasoningContent()],
     )
     task.session["merchant"] = session
     task.session["agent"] = session_agent

@@ -26,6 +26,7 @@ from agent.a2a.prompts import buyer_prompt
 from agent.a2a.protocol import COMPLETED, FAILED, event_error, event_status
 from agent.a2a.tasks import ConsoleRun
 from agent.a2a.trace import run_turn
+from agent.reasoning import DropReasoningContent
 from agent.wallet import Wallet
 
 
@@ -81,6 +82,7 @@ async def run_errand(run: ConsoleRun, payload) -> None:
             name="friends-kitchen-buying-agent",
             description="Buys food from another agent, out of a wallet it cannot exceed.",
             callback_handler=None,
+            hooks=[DropReasoningContent()],
         )
 
         said = await run_turn(agent, _errand(payload), "buyer", run.stream)

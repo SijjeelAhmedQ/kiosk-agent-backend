@@ -25,6 +25,7 @@ from agent.foodpanda.config import foodpanda_settings as fp
 from agent.foodpanda.jobs import DeliveryJob
 from agent.foodpanda.prompts import dispatcher_prompt
 from agent.foodpanda.tools import build_tools
+from agent.reasoning import DropReasoningContent
 
 __all__ = ["MissingApiKey", "credentials_ready", "dispatch"]
 
@@ -58,6 +59,7 @@ def build_dispatcher(job: DeliveryJob) -> Agent:
         name="foodpanda-delivery-dispatcher",
         description="Takes paid restaurant orders from other agents and delivers them.",
         callback_handler=None,
+        hooks=[DropReasoningContent()],
     )
 
 

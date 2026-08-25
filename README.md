@@ -394,6 +394,43 @@ These are enforced in code, not asked for in the prompt:
 
 ---
 
+## The console stream
+
+Every service publishes everything it says on one stream per process, with no
+run id in the URL and nothing to start first:
+
+```
+GET /api/agent/console            the last 800 lines, at once
+GET /api/agent/console/events     the same log, live, as SSE
+```
+
+and the same pair under `/api/a2a`, `/api/delivery` and `/api/foodpanda`.
+
+**Why it exists.** The per-run streams (`/runs/{id}/events`) are addressed to
+whoever started the run, which is right for a console driving one errand and
+useless to anything watching the floor. The operations dashboard could see that
+the ordering agent was busy and never what it was busy with. These streams are
+not addressed to anybody: open one at any time and you get what the process is
+doing, whether or not a console is attached.
+
+Two things feed each one, and the pairing is the point — a refused HTTP call
+lands directly beneath the tool call that made it:
+
+* the events the service already publishes, mirrored at the single `emit` each
+  stream funnels through, so a new event kind cannot be added and forgotten;
+* the process's Python logging, so httpx, Strands and any traceback appear too.
+
+Lines carry a level, the speaker, the tool, and the run they belong to. Model
+text is coalesced rather than emitted a token at a time. The OpenTelemetry
+exporter's own retry chatter is the one thing filtered out: with `FK_OTEL=otlp`
+set and no collector listening it is two lines every few seconds forever, and
+the health endpoint already reports that condition properly. See
+`agent/console.py`; the dashboard's end is `src/dashboard/useConsole.ts` in
+`friends-kitchen-agent-frontend`.
+
+Nothing about it can fail an errand — the buffer is bounded, listeners that go
+away are dropped, and every error inside the module is swallowed.
+
 ## Tracing
 
 Off by default. `FK_OTEL=console` in `.env` prints spans to whichever process

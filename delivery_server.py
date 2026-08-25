@@ -29,8 +29,10 @@ not change; only which service answers these calls does.
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -42,7 +44,56 @@ from pydantic import BaseModel, Field
 # infrastructure rather than domain: agent/telemetry.py reads two environment
 # variables and installs a tracer. It cannot see the cart, the wallet or the
 # placed order, so the boundary this file's docstring describes still holds.
-from agent import telemetry
+from agent import console, telemetry
+
+
+async def _watch_the_clock() -> None:
+    """Say out loud what this service's jobs are doing while nobody is asking.
+
+    Every other agent on this floor emits as it works, because it is doing the
+    work. This one does not work at all — a job's status is a function of how
+    long ago it was taken (see `Job.status`), which is what makes it a courier
+    with no scheduler to fall behind. The cost is that a rider can collect an
+    order and set off and arrive without the process ever having said anything.
+
+    So the console gets its own reader of that clock: one tick a second over the
+    handful of live jobs, one line each time a job's derived status changes. It
+    announces rather than decides — nothing here can move a delivery, and if
+    this task were to die the deliveries would carry on exactly as before.
+    """
+    seen: dict[str, str] = {}
+    while True:
+        with suppress(Exception):
+            for job in list(_jobs.values()):
+                status = job.status
+                if seen.get(job.id) == status:
+                    continue
+                # A job present at startup is not news: reporting the status it
+                # is already in would fill the log with a history nobody watched.
+                if job.id in seen:
+                    console.say(
+                        f"{job.order_number}: {job.message}",
+                        kind="delivery",
+                        ref=job.id,
+                        level="warn" if status == "cancelled" else "info",
+                        data={"status": status, "orderNumber": job.order_number},
+                    )
+                seen[job.id] = status
+            for gone in set(seen) - set(_jobs):
+                seen.pop(gone, None)
+        await asyncio.sleep(1)
+
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    ticker = asyncio.create_task(_watch_the_clock())
+    try:
+        yield
+    finally:
+        ticker.cancel()
+        with suppress(asyncio.CancelledError):
+            await ticker
+
 
 app = FastAPI(
     title="Friends Kitchen Delivery Agent",
@@ -51,6 +102,7 @@ app = FastAPI(
         "Takes a confirmed restaurant order, collects it, and delivers it to "
         "the customer. Speaks the delivery contract the ordering agent uses."
     ),
+    lifespan=_lifespan,
 )
 
 app.add_middleware(
@@ -71,6 +123,14 @@ app.add_middleware(
 # Tracing, if the operator asked for it. Off unless FK_OTEL is set, and it never
 # raises — see agent/telemetry.py.
 telemetry.setup("courier", app)
+
+# The process console: every line this service produces, on a stream anybody may
+# read — `/api/delivery/console` for the scrollback, `/api/delivery/console/events`
+# to follow it live. Installed next to tracing and for the same reason it sits
+# here rather than in a startup hook: the logging handler has to be on the root
+# logger before anything at module scope has a chance to log.
+console.install("courier", "courier")
+console.mount(app, "/api/delivery")
 
 
 def _ok(data: Any) -> dict:
@@ -356,6 +416,12 @@ def create_job(payload: JobIn) -> dict:
     # taken, even though the status does not admit to one for a few seconds.
     job.courier = _RIDERS[len(_jobs) % len(_RIDERS)]
     _jobs[job.id] = job
+    console.say(
+        f"took order {job.order_number} — {job.courier} riding, {job.fee}",
+        kind="status",
+        ref=job.id,
+        data={"orderNumber": job.order_number, "courier": job.courier},
+    )
 
     return _ok(job.to_view())
 
@@ -381,6 +447,13 @@ def cancel_job(job_id: str) -> dict:
             detail="This order has already been delivered — it cannot be cancelled.",
         )
     job.cancelled = True
+    console.say(
+        f"order {job.order_number} called off",
+        kind="status",
+        level="warn",
+        ref=job.id,
+        data={"orderNumber": job.order_number},
+    )
     return _ok(job.to_view())
 
 

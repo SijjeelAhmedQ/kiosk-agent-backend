@@ -189,7 +189,12 @@ class DeliveryJob:
         Only the `delivery` gate. Asking for a rider is a separate request about
         timing rather than about consent, and a customer who said "deliver it to
         me" has not said "and start now".
+
+        The stream is labelled here too, so every line this job mirrors onto the
+        process console names the job it came from — see `agent/console.py`.
         """
+        self.stream.ref = self.id
+
         if self.where_it_goes:
             self.gates[DELIVERY].set()
 

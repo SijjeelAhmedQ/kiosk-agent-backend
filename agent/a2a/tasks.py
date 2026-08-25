@@ -25,6 +25,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent import console
 from agent.a2a.config import a2a_settings
 from agent.a2a.protocol import (
     SUBMITTED,
@@ -39,9 +40,14 @@ from agent.location import UserLocation
 class Stream:
     """An append-only event log that listeners can join late."""
 
-    def __init__(self) -> None:
+    def __init__(self, ref: str = "") -> None:
         self.events: list[dict[str, Any]] = []
         self.listeners: list[asyncio.Queue] = []
+        #: Which run, task or job this stream belongs to. Carried only so the
+        #: line this stream mirrors onto the process console can name it — a
+        #: console log whose rows cannot be traced back to an errand is a wall
+        #: of text. Set by the owner; empty is fine and simply means unlabelled.
+        self.ref = ref
 
     def emit(self, event: dict[str, Any]) -> None:
         """Record, then publish. Recording is what lets a console that opens the
@@ -49,6 +55,11 @@ class Stream:
         self.events.append(event)
         for queue in self.listeners:
             queue.put_nowait(event)
+        # And onto the process-wide console, which is the same information for a
+        # reader who never asked for this particular run — see `agent/console.py`.
+        # Mirrored here rather than at the call sites for the reason this method
+        # exists at all: one funnel, so a new event kind cannot be forgotten.
+        console.mirror(event, ref=self.ref)
 
     def attach(self) -> tuple[list[dict[str, Any]], asyncio.Queue]:
         """Take the backlog and a live feed in one go.
@@ -95,6 +106,11 @@ class MerchantTask:
     # Anything the merchant wants to keep between turns that is not part of the
     # transcript — the cart, the placed order, its own tool state.
     session: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # So every line this task mirrors onto the process console names the
+        # task it came from. The stream cannot know its own owner.
+        self.stream.ref = self.id
 
     def record(self, message: Message) -> Message:
         message.task_id = self.id
@@ -190,6 +206,11 @@ class ConsoleRun:
     # not ask a second time. False — the default — leaves the delivery agent to
     # ask for itself, which is what it has always done.
     where_it_goes: bool = False
+
+    def __post_init__(self) -> None:
+        # Same reason as `MerchantTask.__post_init__` above: the console log
+        # names the errand each line belongs to, and only the run knows its id.
+        self.stream.ref = self.id
 
     def to_wire(self) -> dict[str, Any]:
         return {

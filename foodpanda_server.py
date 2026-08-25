@@ -38,7 +38,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import AliasChoices, BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from agent import telemetry
+from agent import console, telemetry
 from agent.foodpanda import jobs as store
 from agent.foodpanda.config import foodpanda_settings as fp
 from agent.foodpanda.dispatcher import credentials_ready, dispatch
@@ -77,6 +77,14 @@ app.add_middleware(
 # Tracing, if the operator asked for it. Off unless FK_OTEL is set, and it never
 # raises — see agent/telemetry.py.
 telemetry.setup("foodpanda-dispatcher", app)
+
+# The process console: every line this service produces, on a stream anybody may
+# read — `/api/foodpanda/console` for the scrollback, `/api/foodpanda/console/events`
+# to follow it live. Installed next to tracing and for the same reason it sits
+# here rather than in a startup hook: the logging handler has to be on the root
+# logger before anything at module scope has a chance to log.
+console.install("dispatcher", "dispatcher")
+console.mount(app, "/api/foodpanda")
 
 
 def _ok(data) -> dict:

@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from agent import branches, friends_kitchen_api, location, telemetry
+from agent import branches, console, friends_kitchen_api, location, telemetry
 from agent.config import settings
 from agent.delivery import registry as delivery_registry
 from agent.location import InvalidLocation
@@ -61,6 +61,14 @@ app.add_middleware(
 # raises — see agent/telemetry.py. Called here rather than in a startup hook so
 # httpx is instrumented before any module-level client can be built.
 telemetry.setup("ordering-agent", app)
+
+# The process console: every line this service produces, on a stream anybody may
+# read — `/api/agent/console` for the scrollback, `/api/agent/console/events`
+# to follow it live. Installed next to tracing and for the same reason it sits
+# here rather than in a startup hook: the logging handler has to be on the root
+# logger before anything at module scope has a chance to log.
+console.install("ordering", "ordering")
+console.mount(app, "/api/agent")
 
 
 # One errand at a time — see the module docstring.
@@ -116,6 +124,11 @@ class Run:
         self.events.append(event)
         for queue in self.listeners:
             queue.put_nowait(event)
+        # And onto the process-wide console, which carries the same trace to a
+        # reader who never started this run — the operations dashboard. Mirrored
+        # at the one funnel every event already passes through, so a new event
+        # kind cannot be added and forgotten here. See `agent/console.py`.
+        console.mirror(event, ref=self.id)
 
     def attach(self) -> tuple[list[dict], asyncio.Queue]:
         """Take the backlog and a live feed in one go.

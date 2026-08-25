@@ -31,7 +31,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
-from agent import friends_kitchen_api, location, telemetry
+from agent import console, friends_kitchen_api, location, telemetry
 from agent.a2a import tasks as store
 from agent.a2a.buyer_agent import run_errand
 from agent.a2a.config import a2a_settings
@@ -80,6 +80,14 @@ app.add_middleware(
 # raises — see agent/telemetry.py. Called here rather than in a startup hook so
 # httpx is instrumented before any module-level client can be built.
 telemetry.setup("a2a-desk", app)
+
+# The process console: every line this service produces, on a stream anybody may
+# read — `/api/a2a/console` for the scrollback, `/api/a2a/console/events`
+# to follow it live. Installed next to tracing and for the same reason it sits
+# here rather than in a startup hook: the logging handler has to be on the root
+# logger before anything at module scope has a chance to log.
+console.install("a2a", "buyer")
+console.mount(app, "/api/a2a")
 
 
 def _ok(data) -> dict:

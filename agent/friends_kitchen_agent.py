@@ -15,6 +15,7 @@ from strands import Agent
 from agent.config import settings
 from agent.location import UserLocation
 from agent.prompts import system_prompt
+from agent.reasoning import DropReasoningContent
 from agent.wallet import Wallet
 
 
@@ -258,4 +259,5 @@ def build_agent(
         name="friends-kitchen-ordering-agent",
         description="Places orders at Friends Kitchen using a coupon and a cash limit.",
         callback_handler=callback_handler,
+        hooks=[DropReasoningContent()],
     )
