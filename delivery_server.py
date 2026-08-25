@@ -45,6 +45,7 @@ from pydantic import BaseModel, Field
 # variables and installs a tracer. It cannot see the cart, the wallet or the
 # placed order, so the boundary this file's docstring describes still holds.
 from agent import console, telemetry
+from agent.llm import api as llm_api
 
 
 async def _watch_the_clock() -> None:
@@ -131,6 +132,13 @@ telemetry.setup("courier", app)
 # logger before anything at module scope has a chance to log.
 console.install("courier", "courier")
 console.mount(app, "/api/delivery")
+
+# The LLM configuration endpoints, mounted the way the console's are and for the
+# same reason: they are identical in every service, the selection behind them is
+# a file all four processes read, and a screen that could only be reached while
+# one particular service happened to be up would be the wrong place to fix a
+# configuration problem. See `agent/llm/api.py`.
+llm_api.mount(app, "/api/llm")
 
 
 def _ok(data: Any) -> dict:

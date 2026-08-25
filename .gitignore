@@ -2,3 +2,10 @@
 __pycache__/
 *.pyc
 .env
+
+# The active LLM selection, written by the LLM configuration screen.
+var/
+
+# Local env backups / variants (never commit real keys)
+.env.*
+!.env.example

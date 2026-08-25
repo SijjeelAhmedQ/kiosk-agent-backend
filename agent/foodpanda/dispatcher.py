@@ -6,11 +6,11 @@ agent per job, built when the job arrives and thrown away when it lands: a
 dispatcher has nothing worth remembering between deliveries, and an agent that
 carried one job's rider into the next would be a bug rather than a memory.
 
-The model client and the tool-call narration are both borrowed from the A2A
-package. That is not laziness about layering — `build_model` is the only
-provider-agnostic model factory in this codebase, and `run_turn` is what makes
-this agent's tool calls render identically to the other two agents' in a
-console. A third copy of either would drift.
+The model client comes from the central LLM service, through the A2A package's
+one-line wrapper around it, and the tool-call narration is that package's too.
+That is not laziness about layering: the provider and model this agent runs on
+are chosen once for the whole floor, and `run_turn` is what makes this agent's
+tool calls render identically to the other two agents' in a console.
 """
 
 from __future__ import annotations
@@ -33,17 +33,12 @@ __all__ = ["MissingApiKey", "credentials_ready", "dispatch"]
 def credentials_ready() -> tuple[bool, str | None]:
     """Can the dispatcher actually run? `(ready, what_is_missing)`.
 
-    The check itself is the A2A one — same providers, same keys, same
-    which-model-belongs-to-which-vendor trap. Only the *name of the variable to
-    fix* differs, so that is the only thing rewritten here. Duplicating the key
-    table to change two words in a sentence would guarantee the two copies
-    disagree the first time a provider is added.
+    The check itself is the central one — same providers, same keys, same
+    which-model-belongs-to-which-vendor trap — reached through the A2A
+    package's thin wrapper because that is the one that names the agent in the
+    message, and "no API key" is useless advice on a floor with four agents.
     """
-    ready, problem = _a2a_credentials_ready(fp.provider, fp.model_id, "dispatcher")
-    if problem:
-        problem = problem.replace("A2A_DISPATCHER_PROVIDER", "MOCK_FOODPANDA_PROVIDER")
-        problem = problem.replace("A2A_DISPATCHER_MODEL", "MOCK_FOODPANDA_MODEL")
-    return ready, problem
+    return _a2a_credentials_ready(fp.provider, fp.model_id, "dispatcher")
 
 
 def build_dispatcher(job: DeliveryJob) -> Agent:

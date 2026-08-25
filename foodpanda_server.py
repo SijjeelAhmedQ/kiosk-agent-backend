@@ -39,6 +39,8 @@ from pydantic import AliasChoices, BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from agent import console, telemetry
+from agent.llm import api as llm_api
+from agent.llm import llm
 from agent.foodpanda import jobs as store
 from agent.foodpanda.config import foodpanda_settings as fp
 from agent.foodpanda.dispatcher import credentials_ready, dispatch
@@ -85,6 +87,13 @@ telemetry.setup("foodpanda-dispatcher", app)
 # logger before anything at module scope has a chance to log.
 console.install("dispatcher", "dispatcher")
 console.mount(app, "/api/foodpanda")
+
+# The LLM configuration endpoints, mounted the way the console's are and for the
+# same reason: they are identical in every service, the selection behind them is
+# a file all four processes read, and a screen that could only be reached while
+# one particular service happened to be up would be the wrong place to fix a
+# configuration problem. See `agent/llm/api.py`.
+llm_api.mount(app, "/api/llm")
 
 
 def _ok(data) -> dict:
@@ -273,9 +282,17 @@ def health() -> dict:
         {
             "foodpanda": "ok",
             "service": "Foodpanda Delivery (demonstration agent)",
+            # The floor-wide selection this agent follows, for the LLM screen
+            # and for the active-LLM indicator in the rail.
+            "llm": llm.describe(),
             "dispatcher": {
                 "provider": fp.provider,
                 "model": fp.model_id,
+                # True only when a `MOCK_FOODPANDA_*` variable is actually
+                # deciding the brain — that is, when nobody has chosen on the
+                # LLM screen. Reported so a dispatcher running on something
+                # other than the central selection is never silent about it.
+                "pinned": fp.pinned,
                 "ready": ready,
                 "problem": problem,
             },

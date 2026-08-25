@@ -13,6 +13,12 @@ The name says what it is. This is a demonstration courier: a real agent, making
 real decisions, moving a job through the real lifecycle — on a clock rather than
 on a motorbike. It is honest about that everywhere it reports, and it is not
 wired to Foodpanda in any way.
+
+Its *brain* is not configured here at all. Provider and model come from the
+central selection in `agent/llm` — the LLM configuration screen — so this agent
+switches with every other one. `MOCK_FOODPANDA_PROVIDER` and
+`MOCK_FOODPANDA_MODEL` remain as the fallback for a deployment where nobody has
+made that choice, which is what a stock .env is.
 """
 
 from __future__ import annotations
@@ -23,7 +29,7 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 from agent.config import _default_model_for
-from agent.config import settings as base
+from agent.llm import llm
 
 load_dotenv()
 
@@ -37,21 +43,39 @@ def _env(name: str, default: str) -> str:
 def _brain() -> tuple[str, str]:
     """Which provider and model the dispatcher runs on.
 
-    Falls back to the errand flow's provider, so a .env that already runs the
-    ordering agent runs this one too with no new variables. Setting only
-    `MOCK_FOODPANDA_PROVIDER` still gets a sensible model id, because the
-    default follows the provider — the same arrangement `agent/a2a/config.py`
-    uses for the buyer and the merchant, and for the same reason: two agents on
-    one free-tier key means one rate limit ends the errand halfway.
+    Read at call time, not at import: this service is long-lived, and a switch
+    made on the LLM screen while it is running has to reach the next job it
+    takes rather than the next time somebody restarts it.
+
+    The order of precedence is the one `agent/a2a/config.py` uses, for the same
+    reason — a choice made on the screen has to reach every agent or it has
+    reached none:
+
+        1. the central selection, when an operator has made one
+        2. otherwise `MOCK_FOODPANDA_PROVIDER` / `MOCK_FOODPANDA_MODEL`
+        3. otherwise `AGENT_PROVIDER` / `AGENT_MODEL`
+
+    Which of the three is in force is reported by `/api/foodpanda/health`, so a
+    dispatcher running on something other than what the screen says is never
+    silent about it.
     """
-    provider = _env("MOCK_FOODPANDA_PROVIDER", base.provider).lower()
+    active = llm.active()
+    if active.source == "central":
+        return active.provider, active.model_id
+
+    provider = _env("MOCK_FOODPANDA_PROVIDER", active.provider).lower()
     model = _env("MOCK_FOODPANDA_MODEL", "")
     if not model:
-        model = base.model_id if provider == base.provider else _default_model_for(provider)
+        model = active.model_id if provider == active.provider else _default_model_for(provider)
     return provider, model
 
 
-_PROVIDER, _MODEL = _brain()
+def _pinned() -> bool:
+    """Whether a `MOCK_FOODPANDA_*` pin is currently deciding the brain."""
+    if llm.active().source == "central":
+        return False
+    return bool(_env("MOCK_FOODPANDA_PROVIDER", "") or _env("MOCK_FOODPANDA_MODEL", ""))
+
 
 _PORT = _env("MOCK_FOODPANDA_PORT", "8103")
 
@@ -67,8 +91,21 @@ class FoodpandaSettings:
     public_base: str = _env("MOCK_FOODPANDA_PUBLIC_BASE", f"http://localhost:{_PORT}")
 
     # --- The brain --------------------------------------------------------- #
-    provider: str = _PROVIDER
-    model_id: str = _MODEL
+    # Properties rather than fields: a frozen dataclass field is evaluated once
+    # at import, which is exactly how a running dispatcher used to keep serving
+    # the provider it started with. These ask `agent.llm` every time they are
+    # read, so a switch reaches the next job without a restart.
+    @property
+    def provider(self) -> str:
+        return _brain()[0]
+
+    @property
+    def model_id(self) -> str:
+        return _brain()[1]
+
+    @property
+    def pinned(self) -> bool:
+        return _pinned()
 
     #: Not inherited from AGENT_MAX_TOKENS, for the reason A2A does not inherit
     #: it either: on a reasoning model this is `max_completion_tokens`, which

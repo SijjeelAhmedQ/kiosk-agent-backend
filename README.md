@@ -99,6 +99,11 @@ card, and it needs the *Make calls to Inference Providers* permission), and
 [console.anthropic.com](https://console.anthropic.com/settings/keys). `groq`,
 `gemini` and `ollama` also work; see `.env.example` for all six.
 
+Once the control panel is running you can change provider and model on its **LLM
+Configuration** screen instead, and that choice applies to every agent at once —
+see [One brain, four agents](#one-brain-four-agents). The keys stay in `.env`
+either way; the screen never sees them.
+
 ### 4. Give it something to spend
 
 Any coupon from Friends Kitchen's own admin screens works. To mint one from the
@@ -180,9 +185,14 @@ agent/
   telemetry.py               OpenTelemetry, off unless FK_OTEL says otherwise
   branches.py                Which branch serves that location, and where a rider collects
   prompts.py                 The brief the agent is given
-  friends_kitchen_agent.py             Strands Agent + Anthropic model assembly
+  friends_kitchen_agent.py             Strands Agent assembly (the brain comes from agent/llm)
   friends_kitchen_api.py               HTTP client for the Friends Kitchen API
   cart.py                    Client-side cart (the API has no cart endpoint)
+  llm/                       The central LLM service — one brain for every agent
+    store.py                 Which provider and model is selected, and where that is kept
+    providers.py             One adapter per provider (OpenRouter, local Ollama, and five more)
+    service.py               What agents call: llm.build_model()
+    api.py                   /api/llm/* — mounted by all four services
   tools/
     api_tools.py             Ordering via REST
     browser_tools.py         Ordering via the website
@@ -204,7 +214,69 @@ next phase cheap.
 
 **Model.** `claude-opus-5` by default, because ordering is a multi-step tool-use
 loop where a wrong step spends real money. Set `AGENT_MODEL=claude-sonnet-5` in
-`.env` for cheaper demo runs.
+`.env` for cheaper demo runs — or change it on the LLM Configuration screen,
+which is the subject of the next section.
+
+---
+
+## One brain, four agents
+
+There are four agents on this floor and there is **one** provider-and-model
+setting between them. Change it in the control panel's **LLM Configuration**
+screen and the ordering agent, the A2A buyer, the A2A merchant and the Foodpanda
+dispatcher all follow — no restart, and nothing to edit in any agent.
+
+```
+                    LLM Configuration screen  (/llm.html)
+                                 │
+                                 ▼
+                        /api/llm/*   (all four services mount it)
+                                 │
+                                 ▼
+                      agent/llm/service.py   llm.build_model()
+                                 │
+                    ┌────────────┴────────────┐
+                    ▼                         ▼
+          OpenRouterProvider            LocalProvider
+                    │                         │
+                    ▼                         ▼
+             OpenRouter API            Ollama on this machine
+                    └────────────┬────────────┘
+                                 ▼
+                          the selected model
+                                 │
+       ┌──────────────┬──────────┴──────────┬──────────────────┐
+       ▼              ▼                     ▼                  ▼
+  Ordering agent  A2A buyer          A2A merchant     Foodpanda dispatcher
+```
+
+**Where the selection lives.** In `var/llm-config.json`, not in a variable — the
+four agents run in four processes, so a module-level singleton could only ever
+switch one of them. Each process reads the file when it builds a model client,
+so a change reaches a service that is already running and the *next* errand it
+takes uses the new brain. It survives a restart, which is the point: nobody
+should have to choose a provider twice.
+
+**Where models come from.** Both featured providers are asked rather than
+guessed. OpenRouter's catalogue comes from OpenRouter (~400 models, cached ten
+minutes); the local list is whatever `ollama pull` has actually put on this
+machine, read from the daemon's `/api/tags` and cached twenty seconds. Nothing
+is hardcoded in the frontend.
+
+**What has not changed.** `AGENT_PROVIDER` and `AGENT_MODEL` still work and are
+still what a deployment runs on until somebody makes a choice on that screen.
+All seven providers this project supported are still selectable — the two above
+are simply the ones with cards. And no key ever reaches the browser: the screen
+changes *which* provider is used, never what it is authenticated with.
+
+```
+GET    /api/llm/config      what every agent is running on
+PUT    /api/llm/config      change it, everywhere
+GET    /api/llm/providers   what can be chosen, and whether each is usable here
+GET    /api/llm/models      what one provider can run
+GET    /api/llm/health      could this provider and model serve a run
+POST   /api/llm/test        ask the model a question and read the answer back
+```
 
 ---
 

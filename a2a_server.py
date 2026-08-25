@@ -32,6 +32,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from agent import console, friends_kitchen_api, location, telemetry
+from agent.llm import api as llm_api
+from agent.llm import llm
 from agent.a2a import tasks as store
 from agent.a2a.buyer_agent import run_errand
 from agent.a2a.config import a2a_settings
@@ -89,6 +91,13 @@ telemetry.setup("a2a-desk", app)
 console.install("a2a", "buyer")
 console.mount(app, "/api/a2a")
 
+# The LLM configuration endpoints, mounted the way the console's are and for the
+# same reason: they are identical in every service, the selection behind them is
+# a file all four processes read, and a screen that could only be reached while
+# one particular service happened to be up would be the wrong place to fix a
+# configuration problem. See `agent/llm/api.py`.
+llm_api.mount(app, "/api/llm")
+
 
 def _ok(data) -> dict:
     """The envelope every endpoint in this system answers with."""
@@ -128,15 +137,24 @@ def health() -> dict:
         {
             "a2a": "ok",
             "restaurantApi": friends_kitchen_api.health(),
+            # The floor-wide selection both sides follow, for the LLM screen
+            # and for the active-LLM indicator in the rail.
+            "llm": llm.describe(),
             "buyer": {
                 "provider": a2a_settings.buyer_provider,
                 "model": a2a_settings.buyer_model,
+                # True only when an `A2A_BUYER_*` variable is actually deciding
+                # this side — that is, when nobody has chosen on the LLM screen.
+                # A side running on something other than the central selection
+                # must never be silent about it.
+                "pinned": a2a_settings.buyer_pinned,
                 "ready": buyer_ready,
                 "problem": buyer_problem,
             },
             "merchant": {
                 "provider": a2a_settings.merchant_provider,
                 "model": a2a_settings.merchant_model,
+                "pinned": a2a_settings.merchant_pinned,
                 "hands": a2a_settings.merchant_hands,
                 "ready": merchant_ready,
                 "problem": merchant_problem,

@@ -4,208 +4,56 @@ Strands supplies the loop — model call, tool dispatch, feed the result back,
 repeat — so this module only has to decide which brain, which tools, and which
 brief. Swapping `mode` swaps the toolset and nothing else, which is the whole
 point of keeping the API and browser tools shaped the same way.
+
+The brain is not decided here at all any more: it comes from `agent.llm`, which
+every agent in this repo reads. Change the provider or the model on the LLM
+configuration screen and this agent follows on its next errand, with nothing in
+this file to update.
 """
 
 from __future__ import annotations
 
-import os
-
 from strands import Agent
 
 from agent.config import settings
+from agent.llm import MissingApiKey as _MissingApiKey
+from agent.llm import llm
 from agent.location import UserLocation
 from agent.prompts import system_prompt
 from agent.reasoning import DropReasoningContent
 from agent.wallet import Wallet
 
 
-class MissingApiKey(RuntimeError):
-    """The chosen provider has no usable credentials."""
+#: Raised when the selected provider has no usable credentials. Re-exported
+#: rather than redefined so that `except MissingApiKey` catches the same class
+#: whichever module a caller imported it from — `run.py` catches this one.
+MissingApiKey = _MissingApiKey
 
 
 def credentials_ready() -> tuple[bool, str | None]:
-    """Can the configured provider actually run? `(ready, what_is_missing)`.
+    """Can the selected provider actually run? `(ready, what_is_missing)`.
 
     Split out from `_model()` so the health endpoint can answer the question
     without constructing a client — the control panel needs to *say* what is
     missing, not discover it by failing a run.
+
+    The check itself now lives in the central LLM service, because the answer
+    depends on which provider is selected and that is no longer a fact about
+    this module. Same signature, same callers.
     """
-    if settings.provider == "anthropic":
-        if not os.getenv("ANTHROPIC_API_KEY", "").strip():
-            return False, (
-                "ANTHROPIC_API_KEY is not set. Put it in friends-kitchen-agent-backend/.env "
-                "(copy .env.example) — the agent needs its own key."
-            )
-    elif settings.provider == "gemini":
-        if not os.getenv("GOOGLE_API_KEY", "").strip():
-            return False, (
-                "GOOGLE_API_KEY is not set. Get a free key at "
-                "https://aistudio.google.com/apikey and put it in friends-kitchen-agent-backend/.env."
-            )
-    elif settings.provider == "openai":
-        if not os.getenv("OPENAI_API_KEY", "").strip():
-            return False, (
-                "OPENAI_API_KEY is not set. Get a key at "
-                "https://platform.openai.com/api-keys and put it in friends-kitchen-agent-backend/.env."
-            )
-    elif settings.provider == "groq":
-        if not os.getenv("GROQ_API_KEY", "").strip():
-            return False, (
-                "GROQ_API_KEY is not set. Get a free key at "
-                "https://console.groq.com/keys and put it in friends-kitchen-agent-backend/.env."
-            )
-    elif settings.provider == "huggingface":
-        if not os.getenv("HF_TOKEN", "").strip():
-            return False, (
-                "HF_TOKEN is not set. Get a free token at "
-                "https://huggingface.co/settings/tokens (it needs the "
-                "'Make calls to Inference Providers' permission) and put it in "
-                "friends-kitchen-agent-backend/.env."
-            )
-    elif settings.provider == "openrouter":
-        if not os.getenv("OPENROUTER_API_KEY", "").strip():
-            return False, (
-                "OPENROUTER_API_KEY is not set. Get a key at "
-                "https://openrouter.ai/keys and put it in friends-kitchen-agent-backend/.env."
-            )
-    elif settings.provider == "ollama":
-        # Nothing to check — a local Ollama needs no key. If the daemon is down
-        # the first tool call fails with a connection error, which says so.
-        return True, None
-    else:
-        return False, (
-            f"Unknown AGENT_PROVIDER {settings.provider!r} — expected anthropic, "
-            "gemini, openai, groq, huggingface, openrouter or ollama."
-        )
-
-    # A model id left over from another provider is the likeliest mistake when
-    # switching, and it fails as an opaque 404 from the vendor. Name it instead.
-    # Tuples because OpenAI's reasoning models dropped the gpt- prefix, so that
-    # provider needs several — startswith takes a tuple either way. Groq is
-    # deliberately absent: it hosts other vendors' open weights, so its ids
-    # share no prefix (openai/gpt-oss-120b, llama-3.3-70b-versatile, qwen/…) —
-    # and huggingface and openrouter are absent for the same reason.
-    families: dict[str, tuple[str, ...]] = {
-        "anthropic": ("claude",),
-        "gemini": ("gemini",),
-        "openai": ("gpt", "o3", "o4"),
-    }
-    expected = families.get(settings.provider)
-    if expected and not settings.model_id.lower().startswith(expected):
-        return False, (
-            f"AGENT_MODEL is {settings.model_id!r}, which is not a {settings.provider} model. "
-            f"Blank AGENT_MODEL in friends-kitchen-agent-backend/.env to use the default, or set a {expected[0]}-* id."
-        )
-
-    return True, None
+    return llm.credentials_ready()
 
 
 def _model():
-    """Build the model client for whichever provider is configured.
+    """The model client for whatever the LLM configuration screen selected.
 
-    Strands is model-agnostic, so the provider is a config choice rather than a
-    code change — which is what makes a free demo (Gemini's free tier, or a
-    fully local Ollama) possible without touching the tools or the prompt.
+    Seven provider branches used to live here. They live in
+    `agent/llm/providers.py` now, one adapter each, and this function is the
+    one line that asks for the selected one — which is what makes changing the
+    provider on one screen change it for this agent, the A2A pair and the
+    Foodpanda dispatcher at once.
     """
-    ready, problem = credentials_ready()
-    if not ready:
-        raise MissingApiKey(problem or "The model provider is not configured.")
-
-    if settings.provider == "gemini":
-        from strands.models.gemini import GeminiModel
-
-        return GeminiModel(
-            client_args={"api_key": os.getenv("GOOGLE_API_KEY", "").strip()},
-            model_id=settings.model_id,
-            params={"max_output_tokens": settings.max_tokens},
-        )
-
-    if settings.provider == "openai":
-        from strands.models.openai import OpenAIModel
-
-        # `max_completion_tokens`, not `max_tokens`: `params` is spread straight
-        # into the request and the reasoning models reject the older name.
-        # AGENT_EFFORT is deliberately not forwarded — OpenAI's reasoning_effort
-        # has no equivalent of our xhigh/max, and sending one is a 400.
-        return OpenAIModel(
-            client_args={"api_key": os.getenv("OPENAI_API_KEY", "").strip()},
-            model_id=settings.model_id,
-            params={"max_completion_tokens": settings.max_tokens},
-        )
-
-    if settings.provider == "groq":
-        from strands.models.openai import OpenAIModel
-
-        # Groq exposes an OpenAI-compatible endpoint, so the OpenAI provider
-        # works verbatim with the base_url moved. `max_completion_tokens` for
-        # the same reason as above, and AGENT_EFFORT is not forwarded — Groq
-        # takes `reasoning_effort` only on some models and 400s on the rest.
-        return OpenAIModel(
-            client_args={
-                "api_key": os.getenv("GROQ_API_KEY", "").strip(),
-                "base_url": settings.groq_base_url,
-            },
-            model_id=settings.model_id,
-            params={"max_completion_tokens": settings.max_tokens},
-        )
-
-    if settings.provider == "huggingface":
-        from strands.models.openai import OpenAIModel
-
-        # Hugging Face's Inference Providers router is OpenAI-compatible, so
-        # this is the groq branch again with a different base URL and key. The
-        # router picks a backend for the model id unless one is pinned with a
-        # `:provider` suffix. AGENT_EFFORT is not forwarded: whether it is
-        # accepted depends on whichever backend the router chose, so sending it
-        # turns a working config into an intermittent 400.
-        return OpenAIModel(
-            client_args={
-                "api_key": os.getenv("HF_TOKEN", "").strip(),
-                "base_url": settings.hf_base_url,
-            },
-            model_id=settings.model_id,
-            params={"max_completion_tokens": settings.max_tokens},
-        )
-
-    if settings.provider == "openrouter":
-        from strands.models.openai import OpenAIModel
-
-        # OpenRouter is OpenAI-compatible too, so this is the groq branch again
-        # with a fourth base URL. It routes one id to whichever upstream vendor
-        # is cheapest/available, so AGENT_EFFORT is not forwarded for the same
-        # reason as on the Hugging Face router: whether `reasoning_effort` is
-        # accepted depends on the backend it picked, and a rejected one is a 400.
-        return OpenAIModel(
-            client_args={
-                "api_key": os.getenv("OPENROUTER_API_KEY", "").strip(),
-                "base_url": settings.openrouter_base_url,
-            },
-            model_id=settings.model_id,
-            params={"max_completion_tokens": settings.max_tokens},
-        )
-
-    if settings.provider == "ollama":
-        from strands.models.ollama import OllamaModel
-
-        # Ollama's config takes max_tokens directly — it has no `params` key,
-        # unlike the Anthropic and Gemini providers.
-        return OllamaModel(
-            host=settings.ollama_host,
-            model_id=settings.model_id,
-            max_tokens=settings.max_tokens,
-        )
-
-    from strands.models.anthropic import AnthropicModel
-
-    # `params` is spread straight into the Anthropic request. Note what is NOT
-    # here: temperature and top_p are rejected by Claude Opus 5, and thinking is
-    # on by default on that model, so neither needs configuring.
-    return AnthropicModel(
-        client_args={"api_key": os.getenv("ANTHROPIC_API_KEY", "").strip()},
-        model_id=settings.model_id,
-        max_tokens=settings.max_tokens,
-        params={"output_config": {"effort": settings.effort}},
-    )
+    return llm.build_model(max_tokens=settings.max_tokens, effort=settings.effort)
 
 
 def build_agent(

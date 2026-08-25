@@ -21,6 +21,38 @@ def _env(name: str, default: str) -> str:
     return value.strip() or default
 
 
+def _env_any(*names: str, default: str = "") -> str:
+    """The first of `names` that is actually set, else `default`.
+
+    Several settings here have more than one spelling for the same fact — the
+    local runtime's address is `LOCAL_LLM_BASE_URL` in this project's own
+    vocabulary and `OLLAMA_HOST` in the one Ollama's CLI exports, and both were
+    documented as working. Only one of them was ever read, so the other was a
+    silent no-op: a .env that set it looked configured and wasn't. This makes
+    the precedence explicit and the fallbacks real.
+    """
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return default
+
+
+# The local runtime is spelled two ways: `ollama` is what AGENT_PROVIDER has
+# always said and stays the canonical name, and `local` / `local-llm` are what
+# the LLM screen calls it. Both must resolve to the same adapter *and* the same
+# default model — `AGENT_PROVIDER=local` used to reach the adapter through
+# providers.canonical() but miss _DEFAULT_MODEL, so it asked a local Ollama for
+# claude-opus-5 and got an opaque 404.
+_PROVIDER_ALIASES: dict[str, str] = {"local": "ollama", "local-llm": "ollama"}
+
+
+def canonical_provider(name: str) -> str:
+    """The one spelling of a provider name that the rest of the system uses."""
+    key = (name or "").strip().lower()
+    return _PROVIDER_ALIASES.get(key, key)
+
+
 # A sensible model per provider, so switching providers is one variable rather
 # than two. `.get` rather than `[]`: an unknown provider should reach the
 # readable error in friends_kitchen_agent.credentials_ready(), not die on a KeyError here.
@@ -44,12 +76,20 @@ _DEFAULT_MODEL: dict[str, str] = {
     # Append `:free` to use the free-tier routing of a model where one exists.
     "openrouter": "openai/gpt-oss-120b",
     # Small enough to run on a laptop, and one of the better local tool-callers.
-    "ollama": "qwen3:8b",
+    # Overridable, unlike the rest: which local model exists is a fact about the
+    # machine rather than about the vendor, so LOCAL_LLM_MODEL / OLLAMA_MODEL
+    # decide it. Both were documented in .env and neither was read before.
+    "ollama": _env_any("LOCAL_LLM_MODEL", "OLLAMA_MODEL", default="qwen3:4b"),
 }
 
 
 def _default_model_for(provider: str) -> str:
-    return _DEFAULT_MODEL.get(provider, _DEFAULT_MODEL["anthropic"])
+    """The model a provider runs when nothing has pinned one.
+
+    Canonicalises first, so the `local` spelling of the local runtime gets the
+    local default instead of falling through to the Anthropic one.
+    """
+    return _DEFAULT_MODEL.get(canonical_provider(provider), _DEFAULT_MODEL["anthropic"])
 
 
 @dataclass(frozen=True)
@@ -65,19 +105,56 @@ class Settings:
     # huggingface have free tiers, openrouter fronts free-tier models of its
     # own, and ollama runs locally for nothing — which is what makes a no-cost
     # demo possible.
-    provider: str = _env("AGENT_PROVIDER", "anthropic").lower()
+    # LLM_PROVIDER is accepted alongside AGENT_PROVIDER and wins where both are
+    # set: it is the name the LLM screen and this project's docs use, and a
+    # variable that reads as configuration but does nothing is worse than one
+    # that does not exist. Canonicalised, so `local` and `ollama` are one thing.
+    provider: str = canonical_provider(
+        _env_any("LLM_PROVIDER", "AGENT_PROVIDER", default="anthropic")
+    )
 
     # Opus 5 is the default because ordering is a multi-step tool-use loop and
     # a wrong step here spends real money. Override to claude-sonnet-5 for a
     # cheaper run. Each provider needs its own model id, so the default follows
     # the provider rather than forcing every switch to set two variables.
     model_id: str = _env(
-        "AGENT_MODEL", _default_model_for(_env("AGENT_PROVIDER", "anthropic").lower())
+        "AGENT_MODEL",
+        _default_model_for(_env_any("LLM_PROVIDER", "AGENT_PROVIDER", default="anthropic")),
     )
     max_tokens: int = int(_env("AGENT_MAX_TOKENS", "8000"))
 
-    # Where a local Ollama is listening.
-    ollama_host: str = _env("OLLAMA_HOST", "http://localhost:11434")
+    # --- The local runtime ------------------------------------------------- #
+    # Where a local Ollama is listening. LOCAL_LLM_BASE_URL is this project's
+    # own name for it; OLLAMA_BASE_URL and OLLAMA_HOST are both accepted because
+    # .env documented the first and Ollama's own CLI exports the second.
+    ollama_host: str = _env_any(
+        "LOCAL_LLM_BASE_URL",
+        "OLLAMA_BASE_URL",
+        "OLLAMA_HOST",
+        default="http://localhost:11434",
+    )
+
+    # Ollama's own default context is 4096, which silently truncates this
+    # system's prompt rather than raising — the agent then behaves as if it had
+    # never been told half its brief, which is the hardest kind of failure to
+    # read. Set explicitly so the window is a decision rather than a default.
+    ollama_num_ctx: int = int(_env_any("LOCAL_LLM_NUM_CTX", "OLLAMA_NUM_CTX", default="8192"))
+
+    # Whether a reasoning model may think before each step. qwen3 and gpt-oss
+    # both think by default, and on a CPU-bound local box that deliberation is
+    # most of the wall clock — so this defaults off here where it defaults on
+    # upstream.
+    ollama_think: bool = _env_any(
+        "LOCAL_LLM_THINK", "OLLAMA_THINK", default="false"
+    ).lower() in ("1", "true", "yes", "on")
+
+    # The local answer budget, which becomes Ollama's `num_predict`. Separate
+    # from AGENT_MAX_TOKENS on purpose: that is sized for a cloud reasoning
+    # model at 8000, and asking a local daemon to predict more tokens than
+    # ollama_num_ctx can hold invites it to shift the window mid-answer.
+    ollama_max_tokens: int = int(
+        _env_any("LOCAL_LLM_MAX_TOKENS", "OLLAMA_MAX_TOKENS", default="1500")
+    )
 
     # Groq speaks the OpenAI wire format, so it is the OpenAI client pointed
     # somewhere else. Configurable only so a proxy can be slotted in.

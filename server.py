@@ -30,6 +30,8 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from agent import branches, console, friends_kitchen_api, location, telemetry
+from agent.llm import api as llm_api
+from agent.llm import llm
 from agent.config import settings
 from agent.delivery import registry as delivery_registry
 from agent.location import InvalidLocation
@@ -69,6 +71,13 @@ telemetry.setup("ordering-agent", app)
 # logger before anything at module scope has a chance to log.
 console.install("ordering", "ordering")
 console.mount(app, "/api/agent")
+
+# The LLM configuration endpoints, mounted the way the console's are and for the
+# same reason: they are identical in every service, the selection behind them is
+# a file all four processes read, and a screen that could only be reached while
+# one particular service happened to be up would be the wrong place to fix a
+# configuration problem. See `agent/llm/api.py`.
+llm_api.mount(app, "/api/llm")
 
 
 # One errand at a time — see the module docstring.
@@ -398,6 +407,7 @@ def health() -> dict:
     from agent.friends_kitchen_agent import credentials_ready
 
     ready, problem = credentials_ready()
+    active = llm.describe()
 
     return {
         "success": True,
@@ -408,8 +418,16 @@ def health() -> dict:
             # "can this thing run?" A local Ollama needs no key and is ready.
             "hasApiKey": ready,
             "credentialProblem": problem,
-            "provider": settings.provider,
-            "model": settings.model_id,
+            # The *selected* provider and model, not the ones in .env — those
+            # are only the fallback now. Same two keys as before, so the
+            # existing status strip keeps working and starts telling the truth
+            # about a switch made on the LLM screen.
+            "provider": active["provider"],
+            "model": active["model"],
+            # The whole selection, for the screen that changes it and for the
+            # active-LLM indicator in the rail. Never a credential: `ready` is
+            # whether a key is present, not what it is.
+            "llm": active,
             "friendsKitchenWeb": settings.web_base,
             "busy": _run_lock.locked(),
             # Which courier a delivery would go to, and whether it could. Never
