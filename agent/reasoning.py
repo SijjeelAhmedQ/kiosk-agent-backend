@@ -20,6 +20,15 @@ fills with a line that describes no problem and hides the ones that do.
 huggingface and openai itself. So drop the block as the message is added, for
 those providers only: the request that goes on the wire is byte for byte the one
 Strands was going to send anyway, minus a warning about the difference.
+
+The local runtimes are that API too, and on one of them the same block is worse
+than a warning. LM Studio, Jan, GPT4All and vLLM are all reached through the
+OpenAI client and behave exactly as the hosted four do. llama.cpp is reached
+through its own client, and that one does not drop what it cannot format — it
+raises `TypeError: content_type=<reasoningContent> | unsupported type` and ends
+the errand. A local thinking model (qwen3 with thinking left on, say) is enough
+to produce one, so llama.cpp is named here as well, and for a stronger reason
+than tidy logs.
 """
 
 from __future__ import annotations
@@ -35,12 +44,18 @@ def _talks_chat_completions(model: Any) -> bool:
     """Is this agent's brain reached through the Chat Completions API?
 
     Asked of the model client rather than of the provider name, because there
-    are four names for it — openai, groq, huggingface, openrouter — and every
-    one of them ends up as the same class. A fifth would too.
+    are eight names for it — openai, groq, huggingface, openrouter, and the four
+    local servers that speak the same wire format — and every one of them ends
+    up as the same class. A ninth would too.
+
+    llama.cpp is the one that does not: Strands ships a native client for it, so
+    it has to be named. It is the same API underneath, and the block is even
+    less welcome there — see the module docstring.
     """
+    from strands.models.llamacpp import LlamaCppModel
     from strands.models.openai import OpenAIModel
 
-    return isinstance(model, OpenAIModel)
+    return isinstance(model, (OpenAIModel, LlamaCppModel))
 
 
 class DropReasoningContent(HookProvider):

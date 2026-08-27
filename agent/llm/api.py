@@ -4,6 +4,8 @@
     PUT   {prefix}/config      change it, everywhere
     GET   {prefix}/providers   what can be chosen
     GET   {prefix}/models      what a provider can run
+    GET   {prefix}/settings    one provider's own configuration, and its shape
+    PUT   {prefix}/settings    change it — where a local runtime listens, and how
     GET   {prefix}/health      can the selection serve a run
     POST  {prefix}/test        ask the model a question and read the answer
 
@@ -15,7 +17,10 @@ configuration problem.
 
 Nothing here returns a key, and nothing here accepts one. Credentials stay in
 .env, where they already are — this screen changes *which* provider is used, not
-what it is authenticated with.
+what it is authenticated with. That holds for `/settings` too: what it writes is
+an address and a few sampling numbers, and the one credential a local runtime
+can have (`LLAMACPP_API_KEY`, `VLLM_API_KEY`) is read from .env at build time
+and is not a field here.
 """
 
 from __future__ import annotations
@@ -35,6 +40,19 @@ class SelectionIn(BaseModel):
 
     provider: str = Field(min_length=1, max_length=40)
     model: str | None = Field(default=None, max_length=200)
+
+
+class SettingsIn(BaseModel):
+    """A provider, and the settings to merge into what it already has.
+
+    `values` is deliberately untyped here and validated by the adapter instead:
+    each provider declares its own fields, and a model class in this file would
+    be a second copy of that list to keep in step. A field the adapter does not
+    declare comes back as a 400 naming the ones it does.
+    """
+
+    provider: str = Field(min_length=1, max_length=40)
+    values: dict[str, Any] = Field(default_factory=dict)
 
 
 class TestIn(BaseModel):
@@ -126,6 +144,38 @@ def mount(app: Any, prefix: str = "/api/llm") -> None:
                 "problem": None,
             }
         )
+
+    @app.get(f"{prefix}/settings")
+    def read_settings(provider: str | None = None) -> dict:
+        """One provider's own configuration — its fields, and what they hold.
+
+        Cheap and offline: the values come from the selection file and .env, so
+        this answers whether or not the runtime it describes is running.
+        """
+        try:
+            return _ok(llm.settings(provider))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.put(f"{prefix}/settings")
+    def write_settings(payload: SettingsIn) -> dict:
+        """Change where a local runtime is reached, and how it is asked.
+
+        A merge, not a replace: only the fields sent are touched, and a field
+        sent as null goes back to its .env default. Takes effect on the next
+        model built, in this process and in the other three, for the same reason
+        a provider change does — it is a file all four of them read.
+        """
+        try:
+            return _ok(llm.configure(payload.provider, payload.values))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        except OSError:
+            raise HTTPException(
+                status_code=500,
+                detail="The settings could not be saved to disk. Check that the "
+                "service can write to its var/ directory.",
+            ) from None
 
     @app.get(f"{prefix}/health")
     async def provider_health(provider: str | None = None, model: str | None = None) -> dict:

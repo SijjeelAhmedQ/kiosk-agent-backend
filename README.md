@@ -189,10 +189,12 @@ agent/
   friends_kitchen_api.py               HTTP client for the Friends Kitchen API
   cart.py                    Client-side cart (the API has no cart endpoint)
   llm/                       The central LLM service — one brain for every agent
-    store.py                 Which provider and model is selected, and where that is kept
-    providers.py             One adapter per provider (OpenRouter, local Ollama, and five more)
+    store.py                 The selection and each provider's settings, and where they are kept
+    providers.py             One adapter per provider (OpenRouter, five local runtimes, and five more)
     service.py               What agents call: llm.build_model()
     api.py                   /api/llm/* — mounted by all four services
+scripts/
+  llama-server.ps1           Starts llama.cpp's server on the settings in .env (-List for the models it can fetch)
   tools/
     api_tools.py             Ordering via REST
     browser_tools.py         Ordering via the website
@@ -222,7 +224,9 @@ which is the subject of the next section.
 ## One brain, four agents
 
 There are four agents on this floor and there is **one** provider-and-model
-setting between them. Change it in the control panel's **LLM Configuration**
+setting between them. Twelve providers can hold it: OpenRouter and four other
+hosted ones, and six ways to run a model on this machine — llama.cpp, LM Studio,
+Jan.ai, GPT4All, vLLM and Ollama. Change it in the control panel's **LLM Configuration**
 screen and the ordering agent, the A2A buyer, the A2A merchant and the Foodpanda
 dispatcher all follow — no restart, and nothing to edit in any agent.
 
@@ -235,13 +239,21 @@ dispatcher all follow — no restart, and nothing to edit in any agent.
                                  ▼
                       agent/llm/service.py   llm.build_model()
                                  │
-                    ┌────────────┴────────────┐
-                    ▼                         ▼
-          OpenRouterProvider            LocalProvider
-                    │                         │
-                    ▼                         ▼
-             OpenRouter API            Ollama on this machine
-                    └────────────┬────────────┘
+                                 ▼
+                          LLMProvider  (the interface)
+                                 │
+   ┌─────────────┬───────────────┼───────────────┬─────────────┬─────────────┐
+   ▼             ▼               ▼               ▼             ▼             ▼
+OpenRouter   LlamaCpp        LMStudio          Jan.ai       GPT4All        vLLM
+ Provider    Provider        Provider         Provider      Provider     Provider
+   │             │               │               │             │             │
+   ▼             ▼               ▼               ▼             ▼             ▼
+OpenRouter   llama-server    LM Studio        Jan's         GPT4All's     a served
+   API        :8080           :1234           :1337          :4891         model
+   └─────────────┴───────────────┼───────────────┴─────────────┴─────────────┘
+                                 │        (LocalProvider — Ollama :11434 —
+                                 │         and Anthropic, Gemini, OpenAI,
+                                 │         Groq and Hugging Face sit here too)
                                  ▼
                           the selected model
                                  │
@@ -257,23 +269,64 @@ so a change reaches a service that is already running and the *next* errand it
 takes uses the new brain. It survives a restart, which is the point: nobody
 should have to choose a provider twice.
 
-**Where models come from.** Both featured providers are asked rather than
+**Where models come from.** Every featured provider is asked rather than
 guessed. OpenRouter's catalogue comes from OpenRouter (~400 models, cached ten
-minutes); the local list is whatever `ollama pull` has actually put on this
-machine, read from the daemon's `/api/tags` and cached twenty seconds. Nothing
-is hardcoded in the frontend.
+minutes). Each local runtime reports what it has actually loaded — Ollama from
+its `/api/tags`, the other five from their own `/models` — cached for seconds
+rather than minutes, because starting a server is something you do *while* the
+screen is open. Nothing is hardcoded in the frontend.
+
+**Where a local runtime is reached.** llama.cpp, LM Studio, Jan, GPT4All and
+vLLM each have a server URL and a few generation settings, and those live in the
+same `var/llm-config.json` under a `providers` key:
+
+```json
+{
+  "provider": "llamacpp",
+  "model": "qwen3-4b-instruct-2507",
+  "providers": {
+    "llamacpp": { "baseUrl": "http://localhost:8080", "temperature": 0.3 }
+  }
+}
+```
+
+They are overrides: a provider with no entry runs on what `.env` says. The LLM
+screen draws that section from what the adapter declares — a provider with
+nothing to configure gets no section — so a new knob is a line in
+`providers.py`, not a change to the frontend. Nothing credential-shaped goes in
+that file: API keys stay in `.env`, out of reach of an endpoint that writes to
+disk.
+
+**llama.cpp, specifically.** `llama-server` loads one GGUF and serves it over
+an OpenAI-compatible `/v1/chat/completions` with the same `tools` in and
+`tool_calls` out as the hosted providers — which is why the ordering agent, the
+A2A pair and the Foodpanda dispatcher need no change to run on it. Which GGUF is
+loaded, the context window and the GPU offload are decided by the command that
+starts the server (`scripts/llama-server.ps1`, which reads the `LLAMACPP_*`
+block in `.env`) and read back from `/v1/models` and `/props` rather than
+duplicated in the app. That script knows a short ladder of GGUFs — a 4B, an 8B,
+a 14B and a 30B mixture-of-experts — and they live side by side in `var/models`
+rather than replacing one another, so moving up a size is `-Model qwen3-8b`
+(`-List` for the table, `-Download` to fetch one) and not a single line changes
+anywhere above the server. The health check reads `/props` for one thing in
+particular: whether the loaded chat template can emit tool calls at all. It
+cannot when the server was started without `--jinja`, and that is worth catching
+on this screen rather than twenty tool calls into an order.
 
 **What has not changed.** `AGENT_PROVIDER` and `AGENT_MODEL` still work and are
 still what a deployment runs on until somebody makes a choice on that screen.
-All seven providers this project supported are still selectable — the two above
-are simply the ones with cards. And no key ever reaches the browser: the screen
-changes *which* provider is used, never what it is authenticated with.
+Every provider this project supported is still selectable and still behaves
+exactly as it did — the featured ones are simply the ones with cards. And no key
+ever reaches the browser: the screen changes *which* provider is used, never
+what it is authenticated with.
 
 ```
 GET    /api/llm/config      what every agent is running on
 PUT    /api/llm/config      change it, everywhere
 GET    /api/llm/providers   what can be chosen, and whether each is usable here
 GET    /api/llm/models      what one provider can run
+GET    /api/llm/settings    one provider's own configuration, and its shape
+PUT    /api/llm/settings    change it — where a local runtime listens, and how
 GET    /api/llm/health      could this provider and model serve a run
 POST   /api/llm/test        ask the model a question and read the answer back
 ```

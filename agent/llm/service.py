@@ -33,6 +33,7 @@ from agent.llm.providers import (
     LLMProvider,
     MissingApiKey,
     ProviderUnavailable,
+    Setting,
 )
 from agent.llm.store import Selection
 
@@ -44,6 +45,7 @@ __all__ = [
     "MissingApiKey",
     "ProviderUnavailable",
     "Selection",
+    "Setting",
     "llm",
 ]
 
@@ -91,6 +93,66 @@ class LLMService:
     def models(self, provider: str | None = None) -> list[dict]:
         """What `provider` can run. Raises `ProviderUnavailable` if it will not say."""
         return self.provider(provider).list_models()
+
+    def settings(self, provider: str | None = None) -> dict:
+        """One provider's configuration section: its shape and its values.
+
+        Empty `fields` is the honest answer for a provider that has nothing to
+        configure here — a cloud vendor's address is not this deployment's
+        business — and it is what the screen reads to decide whether to draw a
+        section at all.
+        """
+        adapter = self.provider(provider)
+        schema = adapter.settings_schema()
+        return {
+            "provider": adapter.name,
+            "displayName": adapter.display_name,
+            "fields": [setting.to_view() for setting in schema],
+            "values": adapter.settings() if schema else {},
+        }
+
+    def configure(self, provider: str, values: dict) -> dict:
+        """Save one provider's settings, and report them as they now stand.
+
+        Validated against the adapter's own schema rather than trusted: a field
+        it does not declare is refused by name, and a value it does declare is
+        coerced and clamped to the range declared with it. That is what keeps a
+        hand-written PUT from putting a string where a temperature goes and
+        turning every later `build()` into a TypeError.
+
+        A field sent as null is a *reset* — it drops out of the saved file and
+        goes back to what .env says, which is not the same as pinning it to
+        whatever that value happens to be today.
+        """
+        adapter = self.provider(provider)
+        schema = {setting.key: setting for setting in adapter.settings_schema()}
+        if not schema:
+            raise ValueError(f"{adapter.display_name} has no settings to configure.")
+
+        cleaned: dict = {}
+        for key, value in values.items():
+            setting = schema.get(key)
+            if setting is None:
+                raise ValueError(
+                    f"{adapter.display_name} has no setting called {key!r} — "
+                    f"expected one of {', '.join(schema)}."
+                )
+            if value is None:
+                cleaned[key] = None
+                continue
+            coerced = setting.coerce(value)
+            if coerced is None:
+                raise ValueError(f"{value!r} is not a usable value for {setting.label}.")
+            cleaned[key] = coerced
+
+        store.save_settings(adapter.name, cleaned)
+
+        # Any cached model list was fetched from the *previous* address, so a
+        # changed URL must not be answered with what the old one had loaded.
+        if "baseUrl" in cleaned:
+            type(adapter)._cache = None
+
+        return self.settings(adapter.name)
 
     def health(self, provider: str | None = None, model_id: str | None = None) -> dict:
         """Whether a provider and model could serve a run right now.
@@ -331,33 +393,44 @@ def _explain(exc: Exception, adapter: LLMProvider) -> str:
         # collapsing all of it into "not available" sends an operator to check a
         # daemon they can see running. These are the three that actually happen,
         # and each one has a different fix.
+        # Each runtime says the fix in its own words — `ollama pull` is not
+        # advice a llama.cpp operator can act on, and a port is not a hint at
+        # all unless it is the port that was actually tried. `getattr` rather
+        # than a method on the base class, so a provider that has nothing
+        # better to say falls back to the general sentence.
+        hint = adapter.context_hint
+        where = getattr(adapter, "host", "its configured address")
+
         if "out of memory" in lowered or "unable to allocate" in lowered or "oom" in lowered:
             return (
                 "The local model could not be loaded: this machine ran out of memory "
-                "for it. Free some RAM, choose a smaller model, or lower "
-                "LOCAL_LLM_NUM_CTX — the context window is most of what a load "
-                "allocates up front."
+                f"for it. Free some RAM, or choose a smaller model. {hint}".strip()
             )
         if "context" in lowered and ("exceed" in lowered or "longer than" in lowered):
-            return (
-                "The prompt is longer than the local model's context window. Raise "
-                "LOCAL_LLM_NUM_CTX, or pick a model with a larger window."
-            )
+            return f"The prompt is longer than the local model's context window. {hint}".strip()
         if "not found" in lowered or "404" in text or "no such model" in lowered:
+            model_hint = getattr(adapter, "model_hint", None)
             return (
-                f"The local runtime does not have that model. Pull it with "
-                f"`ollama pull <model>`, or pick one from the model list."
+                f"{adapter.display_name} does not have that model. "
+                + (
+                    model_hint("that model")
+                    if callable(model_hint)
+                    else "Pull it with `ollama pull <model>`, or pick one from the model list."
+                )
             )
         if "connect" in lowered or "refused" in lowered or "timeout" in lowered:
+            unreachable = getattr(adapter, "unreachable", None)
+            if callable(unreachable):
+                return unreachable()
             return (
                 "Local LLM is not available. Please make sure the local runtime is "
-                f"running at {getattr(adapter, 'host', 'its configured address')}."
+                f"running at {where}."
             )
         # Anything else: say it is the runtime, but do not pretend to know which
         # of its many failure modes this was.
         return (
-            f"The local runtime at {getattr(adapter, 'host', 'its configured address')} "
-            "failed to serve that model. Check the runtime's own log for the reason."
+            f"The local runtime at {where} failed to serve that model. Check the "
+            "runtime's own log for the reason."
         )
     if "401" in text or "unauthor" in lowered or "invalid api key" in lowered:
         return (

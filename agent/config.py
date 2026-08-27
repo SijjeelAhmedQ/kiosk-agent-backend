@@ -44,7 +44,30 @@ def _env_any(*names: str, default: str = "") -> str:
 # default model — `AGENT_PROVIDER=local` used to reach the adapter through
 # providers.canonical() but miss _DEFAULT_MODEL, so it asked a local Ollama for
 # claude-opus-5 and got an opaque 404.
-_PROVIDER_ALIASES: dict[str, str] = {"local": "ollama", "local-llm": "ollama"}
+# The local runtimes are spelled more than one way. `llama.cpp` is how its own
+# project writes itself and `llamacpp` is what fits in an environment variable;
+# `lm-studio`, `jan.ai` and the rest are the same story. Every spelling has to
+# reach one adapter *and* one default model, which is why this table is here and
+# not in `providers.py`: two copies was the original bug.
+_PROVIDER_ALIASES: dict[str, str] = {
+    "local": "ollama",
+    "local-llm": "ollama",
+    "llama.cpp": "llamacpp",
+    "llama-cpp": "llamacpp",
+    "llama_cpp": "llamacpp",
+    "llamaserver": "llamacpp",
+    "llama-server": "llamacpp",
+    "lm-studio": "lmstudio",
+    "lm_studio": "lmstudio",
+    "lmstudio.ai": "lmstudio",
+    "jan": "janai",
+    "jan.ai": "janai",
+    "jan-ai": "janai",
+    "jan_ai": "janai",
+    "gpt-4-all": "gpt4all",
+    "gpt-4all": "gpt4all",
+    "vllm-openai": "vllm",
+}
 
 
 def canonical_provider(name: str) -> str:
@@ -80,6 +103,21 @@ _DEFAULT_MODEL: dict[str, str] = {
     # machine rather than about the vendor, so LOCAL_LLM_MODEL / OLLAMA_MODEL
     # decide it. Both were documented in .env and neither was read before.
     "ollama": _env_any("LOCAL_LLM_MODEL", "OLLAMA_MODEL", default="qwen3:4b"),
+    # The five OpenAI-compatible local servers. Every one of them serves
+    # whatever GGUF (or, for vLLM, whatever safetensors) it was started with, so
+    # the model id is a fact about how the server was launched rather than about
+    # the vendor — exactly like Ollama's above, and overridable for the same
+    # reason. Each publishes a `/models` endpoint, so the LLM screen offers what
+    # the server actually has loaded and this default is only what a deployment
+    # runs on before anybody looks.
+    #
+    # `default` is llama.cpp's own name for "the model this server loaded",
+    # which is what llama-server answers with when it was started without `-a`.
+    "llamacpp": _env_any("LLAMACPP_MODEL", default="default"),
+    "lmstudio": _env_any("LMSTUDIO_MODEL", default="local-model"),
+    "janai": _env_any("JAN_MODEL", "JANAI_MODEL", default="local-model"),
+    "gpt4all": _env_any("GPT4ALL_MODEL", default="local-model"),
+    "vllm": _env_any("VLLM_MODEL", default="local-model"),
 }
 
 
@@ -100,11 +138,12 @@ class Settings:
     terminal_id: str = _env("FK_TERMINAL_ID", "agent-01")
 
     # --- The brain --------------------------------------------------------- #
-    # anthropic | gemini | openai | groq | huggingface | openrouter | ollama.
+    # anthropic | gemini | openai | groq | huggingface | openrouter | ollama |
+    # llamacpp | lmstudio | janai | gpt4all | vllm.
     # Strands is model-agnostic, so this is a config choice: gemini, groq and
     # huggingface have free tiers, openrouter fronts free-tier models of its
-    # own, and ollama runs locally for nothing — which is what makes a no-cost
-    # demo possible.
+    # own, and the five local runtimes run on this machine for nothing — which
+    # is what makes a no-cost demo possible.
     # LLM_PROVIDER is accepted alongside AGENT_PROVIDER and wins where both are
     # set: it is the name the LLM screen and this project's docs use, and a
     # variable that reads as configuration but does nothing is worse than one
@@ -155,6 +194,76 @@ class Settings:
     ollama_max_tokens: int = int(
         _env_any("LOCAL_LLM_MAX_TOKENS", "OLLAMA_MAX_TOKENS", default="1500")
     )
+
+    # --- llama.cpp --------------------------------------------------------- #
+    # `llama-server` is llama.cpp's own HTTP server, and it speaks the same
+    # OpenAI-compatible /v1/chat/completions the hosted providers do — which is
+    # why nothing in the agent layer changes to use it.
+    #
+    # Where it listens. 8100-8103 are the four agent services, so the runtime
+    # and the agents cannot collide however they are started. LLM_BASE_URL is
+    # read as a fallback because .env documented it first.
+    #
+    # This is the *default*. The LLM screen can override it per deployment, and
+    # what it saves lands in var/llm-config.json beside the provider choice —
+    # so the URL is configured in one place whichever way it is set.
+    llamacpp_base_url: str = _env_any(
+        "LLAMACPP_BASE_URL", "LLM_BASE_URL", default="http://localhost:8080"
+    )
+
+    # The context window `llama-server` was started with, `-c`. Not a
+    # per-request setting — it is fixed when the server loads the model — so
+    # this is here for two reasons only: scripts/llama-server.ps1 hands it to
+    # the runtime, and the LLM screen shows it beside the answer budget so a
+    # budget larger than the window it has to fit in is visible before it is
+    # sent. llama-server refuses such a request outright rather than silently
+    # shifting the window, which is the one thing it does better than Ollama.
+    llamacpp_ctx: int = int(_env("LLAMACPP_CTX", "8192"))
+
+    # How many model layers go on the GPU, `-ngl`. 99 means all of them. Read
+    # only by the start script; the server decides nothing per request from it.
+    llamacpp_ngl: int = int(_env("LLAMACPP_NGL", "99"))
+
+    # The local answer budget, `max_tokens` on the request. Separate from
+    # AGENT_MAX_TOKENS for the same reason Ollama's is: that figure is sized for
+    # a cloud reasoning model at 8000, and asking for more tokens than
+    # llamacpp_ctx can hold is refused.
+    llamacpp_max_tokens: int = int(_env("LLAMACPP_MAX_TOKENS", "2000"))
+
+    # llama-server takes no credential unless it was started with `--api-key`.
+    # Blank is the normal case for a loopback runtime.
+    llamacpp_api_key: str = _env("LLAMACPP_API_KEY", "")
+
+    # --- the other OpenAI-compatible local servers -------------------------- #
+    # Four more ways to run a model on this machine, all of them serving the
+    # OpenAI wire format, so all four are the OpenAI client with the base URL
+    # moved — the same branch Groq and OpenRouter take. Only the port differs,
+    # and each of these is the port its own project ships as the default.
+    lmstudio_base_url: str = _env("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
+    jan_base_url: str = _env_any(
+        "JAN_BASE_URL", "JANAI_BASE_URL", default="http://localhost:1337/v1"
+    )
+    gpt4all_base_url: str = _env("GPT4ALL_BASE_URL", "http://localhost:4891/v1")
+    # vLLM's own default port is 8000, which on a machine also running the
+    # restaurant API (FK_API_BASE, above) is taken — so this is the one of the
+    # four most likely to need changing, either here or on the LLM screen.
+    vllm_base_url: str = _env("VLLM_BASE_URL", "http://localhost:8000/v1")
+
+    # A key, for the deployments that put one in front of a local server. vLLM
+    # is the one that actually does this — `--api-key` on the serve command — so
+    # it is optional everywhere and read at build time rather than demanded by
+    # `configured()`, which would make a loopback runtime look unusable.
+    lmstudio_api_key: str = _env("LMSTUDIO_API_KEY", "")
+    jan_api_key: str = _env_any("JAN_API_KEY", "JANAI_API_KEY", default="")
+    gpt4all_api_key: str = _env("GPT4ALL_API_KEY", "")
+    vllm_api_key: str = _env("VLLM_API_KEY", "")
+
+    # What a local server is asked for when nothing has been set on the LLM
+    # screen. Shared by the five above rather than one variable each: they are
+    # the same request to five implementations of the same API, and a knob per
+    # runtime would be five things to keep in step for one decision.
+    local_temperature: float = float(_env("LOCAL_LLM_TEMPERATURE", "0.7"))
+    local_max_tokens: int = int(_env("LOCAL_LLM_ANSWER_TOKENS", "2000"))
 
     # Groq speaks the OpenAI wire format, so it is the OpenAI client pointed
     # somewhere else. Configurable only so a proxy can be slotted in.

@@ -14,6 +14,7 @@ from agent.llm.providers import (
     LLMProvider,
     MissingApiKey,
     ProviderUnavailable,
+    Setting,
 )
 from agent.llm.service import LLMService, llm
 from agent.llm.store import Selection
@@ -26,5 +27,6 @@ __all__ = [
     "MissingApiKey",
     "ProviderUnavailable",
     "Selection",
+    "Setting",
     "llm",
 ]
