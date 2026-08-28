@@ -234,6 +234,23 @@ class Settings:
     # Blank is the normal case for a loopback runtime.
     llamacpp_api_key: str = _env("LLAMACPP_API_KEY", "")
 
+    # Whether an errand may start `llama-server` itself when llama.cpp is the
+    # selected provider and nothing is answering on its port. On by default,
+    # because this is the one provider whose process is a window somebody can
+    # close: every other runtime here is either hosted or a service that starts
+    # on login. Turn it off where the runtime is started some other way — a
+    # Windows service, a container, another machine — so that a silent port is
+    # a fault to report rather than a second server to launch.
+    llamacpp_autostart: bool = _env("LLAMACPP_AUTOSTART", "true").lower() in (
+        "1", "true", "yes", "on",
+    )
+
+    # How long to wait for a just-started llama-server to finish loading the
+    # GGUF, in seconds. Loading is the slow half of starting this runtime and it
+    # scales with the file: the 4B is twenty-odd seconds off a warm disk, the
+    # 30B mixture-of-experts a good deal more, and a cold disk is slower again.
+    llamacpp_autostart_timeout: float = float(_env("LLAMACPP_AUTOSTART_TIMEOUT", "180"))
+
     # --- the other OpenAI-compatible local servers -------------------------- #
     # Four more ways to run a model on this machine, all of them serving the
     # OpenAI wire format, so all four are the OpenAI client with the base URL

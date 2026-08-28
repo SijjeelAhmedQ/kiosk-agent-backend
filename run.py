@@ -109,6 +109,18 @@ def main() -> int:
         )
         return 1
 
+    # llama.cpp is the only provider here whose runtime is a window somebody
+    # can close rather than a hosted endpoint or a service that starts on
+    # login — so when it is what we are running on and its port is silent, this
+    # starts scripts/llama-server.ps1 on the same .env settings and waits for
+    # the GGUF to load. Every other provider, and a llama-server that is
+    # already up, costs one local request and nothing else. Never fatal: if it
+    # cannot be started, build_agent fails a moment later with the provider's
+    # own message, which names the address and the command.
+    from agent.llm import llamacpp_launcher
+
+    llamacpp_launcher.ensure(lambda line: print(f"{DIM}  {line}{RESET}"))
+
     # Imported here so a missing API key is reported after the cheaper checks.
     from agent.friends_kitchen_agent import MissingApiKey, build_agent
 

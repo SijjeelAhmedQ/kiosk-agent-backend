@@ -313,6 +313,18 @@ particular: whether the loaded chat template can emit tool calls at all. It
 cannot when the server was started without `--jinja`, and that is worth catching
 on this screen rather than twenty tool calls into an order.
 
+That server is also the only runtime here that somebody has to *start*. The
+hosted providers are always up and Ollama is a service that starts on login;
+`llama-server` is a window that can be closed, and closing it turns the
+llama.cpp card into "server is not reachable at http://localhost:8080" until
+somebody runs the script again. So `run.py` runs it: when llama.cpp is the
+selected provider and nothing answers on its port, the errand starts
+`scripts/llama-server.ps1` on the same `.env` settings, waits for the GGUF to
+load, and carries on. The server outlives the run, so the wait is paid once
+rather than once per errand, and a `llama-server` already up — whatever `-Model`
+it was started with — is left alone. `LLAMACPP_AUTOSTART=false` turns it off for
+a deployment that starts the runtime some other way.
+
 **What has not changed.** `AGENT_PROVIDER` and `AGENT_MODEL` still work and are
 still what a deployment runs on until somebody makes a choice on that screen.
 Every provider this project supported is still selectable and still behaves
