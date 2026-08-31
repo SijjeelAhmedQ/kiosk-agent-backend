@@ -4,14 +4,17 @@ Every provider answers the same four questions — can you run, what models do y
 have, are you healthy, and build me a client — so nothing above this file has to
 know whether the model is a service in Singapore or a process on this laptop.
 
-Seven of them are the ones the LLM screen puts front and centre — one cloud
-router and six ways to run a model on this machine:
+Two of them are the ones the LLM screen puts front and centre — one cloud router
+and one way to run a model on this machine:
 
 * `OpenRouterProvider` — the cloud router this system has been using all along.
   Its model list is fetched from OpenRouter, so it is whatever OpenRouter has
   today rather than a list baked into a frontend.
 * `LlamaCppProvider` — `llama-server`, llama.cpp's own HTTP server, serving one
   GGUF over an OpenAI-compatible API with llama.cpp's native sampling on top.
+
+The other local runtimes are supported exactly as well, just not led with:
+
 * `LMStudioProvider`, `JanProvider`, `GPT4AllProvider`, `VLLMProvider` — four
   more local servers that speak the OpenAI wire format, so four instances of one
   adapter with different ports.
@@ -26,8 +29,11 @@ reports the models it has actually loaded rather than a list written here.
 The rest — Anthropic, Gemini, OpenAI, Groq, Hugging Face — were already
 supported through `AGENT_PROVIDER` and still are. They have no listing endpoint
 worth calling here, so they report their configured default and say the list is
-not dynamic. Removing them would have broken an existing .env; they are simply
-not featured.
+not dynamic. Removing them would have broken an existing .env.
+
+Featured is a *presentation* fact and lives on the adapter only because the
+screen has to be told it: everything unfeatured stays selectable, keeps its
+settings, and runs the agents identically once picked.
 
 Nothing in this file returns, logs or accepts an API key. `configured()` answers
 whether a key is *present*, which is all a UI ever needs to know.
@@ -522,7 +528,6 @@ class LocalProvider(LLMProvider):
     kind = "local"
     key_env = None
     dynamic_models = True
-    featured = True
     blurb = "Open models running on this machine, through Ollama"
     context_hint = (
         "Raise LOCAL_LLM_NUM_CTX, or pick a model with a larger window."
@@ -693,7 +698,6 @@ class _LocalServer(LLMProvider):
     kind = "local"
     key_env = None
     dynamic_models = True
-    featured = True
     context_hint = (
         "Restart the server with a larger context window, or pick a model with "
         "a smaller one."
@@ -982,6 +986,7 @@ class LlamaCppProvider(_LocalServer):
 
     name = "llamacpp"
     display_name = "llama.cpp"
+    featured = True
     blurb = "A GGUF on this machine, through llama-server"
     context_hint = (
         "Raise LLAMACPP_CTX and restart llama-server — it refuses a request that "
