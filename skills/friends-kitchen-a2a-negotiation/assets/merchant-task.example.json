@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "A filled-in POST /api/a2a/merchant/tasks body — one agent opening a",
+    "conversation with the Friends Kitchen merchant.",
+    "",
+    "Note where the coupon code is. It belongs in `data`, never in `message`:",
+    "transcribed into prose it is a string a model can mistype, and a mistyped",
+    "coupon fails as 'not found' three tool calls later. The merchant is handed",
+    "data parts as labelled JSON, exactly as written.",
+    "",
+    "Note also what is absent. There is no budget field and no cash limit. The",
+    "merchant learns about the money only if the buyer chooses to bring it up,",
+    "and that asymmetry is the point of the exercise."
+  ],
+  "message": "Two zinger burgers and a large drink, take away please. What would that come to?",
+  "data": {
+    "couponCode": "FK-8H2K-9QW1"
+  },
+  "buyerId": "console-run-9f2a41c0",
+  "messageId": "a1b2c3d4e5f6"
+}

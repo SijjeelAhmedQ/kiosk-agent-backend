@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "A filled-in POST /api/agent/runs body — the delivery case, which is the one",
+    "with the most in it. Remove `userLocation` entirely for a counter order:",
+    "its presence is what makes the errand a delivery, and there is no other switch.",
+    "Every amount here is Pakistani rupees. `cashLimit: 2500` is Rs 2,500."
+  ],
+  "instruction": "Order two cheeseburgers and a large drink",
+  "couponCode": "FK-8H2K-9QW1",
+  "cashLimit": 2500,
+  "mode": "api",
+  "customerId": null,
+  "headless": true,
+  "userLocation": {
+    "latitude": 33.5875,
+    "longitude": 72.995,
+    "accuracyMeters": null,
+    "label": "Office, Sector F-8",
+    "source": "manual"
+  }
+}

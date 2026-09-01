@@ -21,6 +21,7 @@ from agent.llm import llm
 from agent.location import UserLocation
 from agent.prompts import system_prompt
 from agent.reasoning import DropReasoningContent
+from agent.skills import equip
 from agent.wallet import Wallet
 
 
@@ -95,15 +96,23 @@ def build_agent(
         tools += DELIVERY_TOOLS
         service = registry.get().display_name
 
+    prompt = system_prompt(
+        wallet,
+        browser_mode=(mode == "browser"),
+        delivery_to=deliver_to.display() if deliver_to else None,
+        delivery_service=service,
+    )
+
+    # Skills last, so the brief ends with the library the agent may reach for.
+    # Additive and safe when `skills/` is empty: with nothing installed this
+    # hands back the tools and the prompt untouched, and the errand runs
+    # exactly as it did before there was a skill layer. See agent/skills/.
+    tools, prompt = equip(tools, prompt, agent="ordering")
+
     return Agent(
         model=_model(),
         tools=tools,
-        system_prompt=system_prompt(
-            wallet,
-            browser_mode=(mode == "browser"),
-            delivery_to=deliver_to.display() if deliver_to else None,
-            delivery_service=service,
-        ),
+        system_prompt=prompt,
         name="friends-kitchen-ordering-agent",
         description="Places orders at Friends Kitchen using a coupon and a cash limit.",
         callback_handler=callback_handler,

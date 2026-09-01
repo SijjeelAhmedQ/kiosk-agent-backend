@@ -93,6 +93,23 @@ param(
     # notice either way.
     [int]$Parallel,
 
+    # What the KV cache is stored as (-ctk/-ctv). q8_0 rather than llama.cpp's
+    # own f16 default, because on a small card the cache is what decides
+    # whether the model sits on the GPU at all. Qwen3-4B at -c 8192 wants
+    # 1.13 GiB of f16 cache; 2.33 GiB of weights plus that plus the compute
+    # buffer is more than a 4 GB card has, so llama.cpp leaves two thirds of
+    # the layers in system RAM and generation drops to ~3 tok/s. The same
+    # cache at q8_0 is 0.56 GiB, every layer fits, and it is ~27 tok/s.
+    #
+    # f16 turns it off; q4_0 halves it again to make room for a longer -c.
+    [string]$CacheType,
+
+    # Flash attention, -fa on|off|auto. On rather than llama.cpp's 'auto',
+    # because a quantised V cache is only implemented on that path - see the
+    # check below - and it shrinks the attention scratch buffer that has to
+    # fit beside the weights.
+    [string]$FlashAttn,
+
     # llama-server.exe. Defaults to var/llamacpp, where .env says to unzip a
     # release; falls back to whatever is on PATH.
     [string]$Exe,
@@ -341,6 +358,16 @@ if (-not $Alias) { $Alias = 'default' }
 if (-not $Ctx) { $Ctx = [int](Get-Setting @('LLAMACPP_CTX') '8192') }
 if (-not $PSBoundParameters.ContainsKey('Ngl')) { $Ngl = [int](Get-Setting @('LLAMACPP_NGL') '99') }
 if (-not $Parallel) { $Parallel = [int](Get-Setting @('LLAMACPP_PARALLEL') '1') }
+if (-not $CacheType) { $CacheType = Get-Setting @('LLAMACPP_CACHE_TYPE') 'q8_0' }
+if (-not $FlashAttn) { $FlashAttn = Get-Setting @('LLAMACPP_FLASH_ATTN') 'on' }
+
+# A quantised V cache is only implemented on the flash-attention path. Setting
+# one without the other does not give a slower server: llama-server fails to
+# create the context and exits, which reaches the operator as the autostart
+# timeout rather than as a reason. Give the reason here instead.
+if ($FlashAttn -eq 'off' -and $CacheType -ne 'f16') {
+    throw "LLAMACPP_CACHE_TYPE=$CacheType needs flash attention - llama.cpp only quantises the V cache on that path. Either LLAMACPP_FLASH_ATTN=on, or LLAMACPP_CACHE_TYPE=f16, and note that an f16 cache at -c $Ctx does not fit a 4 GB card beside the weights."
+}
 $apiKey = Get-Setting @('LLAMACPP_API_KEY')
 
 if (-not $Exe) {
@@ -372,7 +399,10 @@ $arguments = @(
     '--port', $Port,
     '-c', $Ctx,
     '-ngl', $Ngl,
-    '-np', $Parallel
+    '-np', $Parallel,
+    '-ctk', $CacheType,
+    '-ctv', $CacheType,
+    '-fa', $FlashAttn
 )
 if (-not $NoJinja) { $arguments += '--jinja' }
 if ($NoThink) { $arguments += @('--reasoning-budget', '0') }
@@ -383,6 +413,7 @@ Write-Host "  llama.cpp   $(Split-Path -Leaf $Exe)"
 Write-Host "  model       $(Split-Path -Leaf $Gguf)  (as '$Alias')"
 Write-Host "  listening   http://localhost:$Port"
 Write-Host "  context     $Ctx tokens, $Ngl layers on the GPU"
+Write-Host "  kv cache    $CacheType, flash attention $FlashAttn"
 Write-Host "  slots       $Parallel request(s) at a time"
 if ($NoThink) { Write-Host "  thinking    off (--reasoning-budget 0)" }
 Write-Host ""

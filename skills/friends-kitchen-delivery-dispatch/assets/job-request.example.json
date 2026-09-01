@@ -1,0 +1,51 @@
+{
+  "_comment": [
+    "A filled-in delivery job request — POST /api/foodpanda/jobs on 8103, or",
+    "POST /api/delivery/jobs on 8102. One wire format for both, which is what",
+    "makes DELIVERY_PROVIDER a config change rather than a code change.",
+    "",
+    "In normal operation nothing hand-writes this: authorize_payment hands a paid",
+    "take-away order over on its own, and the ordering agent has no step for it.",
+    "This is here for reading a request that failed, and for calling a courier",
+    "agent directly when debugging one.",
+    "",
+    "order.paid must be true (409 otherwise) and order.items must be non-empty",
+    "(422 otherwise). Both are checked at the edge rather than left to the",
+    "dispatcher, because neither is a judgement call.",
+    "",
+    "whereItGoes says the customer already asked for this to be brought to them.",
+    "It pre-answers the second gate only, is accepted as where_it_goes too, and",
+    "absent reads as false — the behaviour this service has always had."
+  ],
+  "order": {
+    "orderId": "b7f1c2d4-8e33-4a10-9c55-1f2e3d4a5b6c",
+    "orderNumber": "FK-2412",
+    "status": "paid",
+    "paid": true,
+    "itemCount": 3,
+    "items": [
+      { "name": "Zinger Burger", "quantity": 2, "note": "no mayo" },
+      { "name": "Large Drink", "quantity": 1, "note": null }
+    ]
+  },
+  "pickup": {
+    "latitude": 33.6007,
+    "longitude": 73.0679,
+    "address": "Friends Kitchen, Blue Area, Islamabad",
+    "name": "Friends Kitchen — Blue Area",
+    "phone": "+92 51 000 0000",
+    "note": "Collect at the counter"
+  },
+  "dropoff": {
+    "latitude": 33.5875,
+    "longitude": 72.995,
+    "address": "Office, Sector F-8, Islamabad",
+    "name": "Customer",
+    "phone": null,
+    "note": "Second floor"
+  },
+  "branchId": "fk-blue-area",
+  "distanceKm": 6.8,
+  "notes": null,
+  "whereItGoes": false
+}
