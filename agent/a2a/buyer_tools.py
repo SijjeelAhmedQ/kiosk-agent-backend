@@ -38,6 +38,7 @@ from agent.a2a.protocol import (
     event_message,
     parts_text,
 )
+from agent.a2a.redaction import strip_ids
 from agent.a2a.tasks import ConsoleRun
 from agent.friends_kitchen_api import FriendsKitchenApiError
 from agent.wallet import BudgetExceeded, Wallet, rupees
@@ -61,6 +62,11 @@ class BuyerSession:
 
     # The merchant's task id is announced to the console once, not per message.
     announced_task: bool = False
+
+    # Whether `verify_order` has actually been run. A report that says the
+    # order was checked against the restaurant's records is a claim like any
+    # other, and this is the only thing that can contradict it.
+    verified: bool = False
 
     # A redemption is reported in every revised quote that follows it; the
     # wallet must only hear about it the first time.
@@ -143,7 +149,20 @@ def _digest(reply: dict[str, Any], session: BuyerSession) -> dict:
     }
     if quotes:
         out["quotes"] = quotes
-
+    elif not session.firm_quote:
+        # A price in a sentence is not a quote, and the difference is not
+        # pedantry: `walletCheck` below is computed from the artifact, so a
+        # merchant that only *described* a total has handed the buyer nothing to
+        # measure against its budget. A model reading "the total is Rs 530" will
+        # treat that as settled unless something says otherwise, so this says
+        # otherwise — every time, in the same words.
+        out["note"] = (
+            "No quote came with this reply. Anything the merchant said about a "
+            "price is not a quote you can act on — there is no walletCheck "
+            "because there is nothing to check. Ask it to send a quote, or to "
+            "confirm the order if you have already agreed one, before going "
+            "any further."
+        )
     verdict = _affordability(session, quotes)
     if verdict:
         out["walletCheck"] = verdict
@@ -210,7 +229,15 @@ def build_tools(session: BuyerSession) -> list:
         Both sides are emitted here rather than left to the merchant's own
         stream, because the console follows the run and a transcript with only
         half a conversation in it is worse than none.
+
+        The message is stripped of restaurant identifiers on the way out, the
+        same as the merchant's replies are. The buyer has no legitimate use for
+        one — every tool it holds takes plain language, a coupon code travels in
+        `data` where a model cannot mistype it — so an id in a buyer sentence is
+        always an id it read somewhere and repeated, and stripping it here keeps
+        it out of both the transcript and the merchant's context.
         """
+        message = strip_ids(message) or message
         outgoing = Message.say("buyer", message, data)
         session.run.stream.emit(event_message(outgoing))
 
@@ -382,11 +409,17 @@ def build_tools(session: BuyerSession) -> list:
         if session.paid:
             return _fail("Already paid. Do not pay twice.")
         if not session.firm_quote:
+            # Named as a step rather than a state, because the model that calls
+            # this early is the model that will call it again unchanged. What it
+            # needs is the sentence to send, not a second explanation of why the
+            # first attempt failed.
             return _fail(
-                "No firm quote yet. Ask the merchant to confirm the order — an "
-                "estimate has no tax in it and is not something to pay against."
+                "No firm quote yet, so there is nothing to pay. This is a "
+                "correction, not the end of the errand: call talk_to_merchant "
+                "and ask it to confirm the order. A firm quote arrives when it "
+                "does, and then this tool will work. An estimate has no tax in "
+                "it and is not something to pay against."
             )
-
         due = float(session.firm_quote.get("amountDue", {}).get("amount", 0))
 
         try:
@@ -441,6 +474,7 @@ def build_tools(session: BuyerSession) -> list:
         except FriendsKitchenApiError as exc:
             return _fail(f"Could not check with the restaurant: {exc}")
 
+        session.verified = True
         summary = detail.get("summary", {})
 
         # `amountDue` is *not* an outstanding balance. The restaurant defines it

@@ -25,6 +25,7 @@ than through a second HTTP client with its own idea of the base URL.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -59,6 +60,25 @@ class MerchantSession:
     # order is on the books — which is exactly how a buyer ends up committed to
     # something it cannot pay for.
     tax_rate: float | None = None
+
+    # Sends the current basket as a quote and returns it, or returns None when
+    # there is nothing new to quote. Registered by whichever toolset was built,
+    # because only that toolset knows where the basket lives: the API tools keep
+    # one here, the browser tools read it off the screen. `merchant_agent` calls
+    # it after every turn — see the note there on quoting unasked.
+    quote_unasked: Callable[[], Awaitable[dict | None]] | None = None
+
+    # The basket as it stood when the last quote went out, in whatever shape the
+    # toolset that sent it uses. What makes an unasked quote idempotent: one goes
+    # out when the basket has moved on from the figure the buyer is holding, and
+    # not otherwise.
+    last_quoted: Any = None
+
+    # Every restaurant-generated id this conversation has handled. Kept for one
+    # reason: `merchant_agent` takes them back out of the merchant's words before
+    # they are sent. A product id is the restaurant's plumbing — the other agent
+    # cannot use one, and a customer must never be shown one.
+    seen_ids: set[str] = field(default_factory=set)
 
 
 async def _get(path: str, **params: Any) -> Any:
@@ -161,6 +181,10 @@ def build_tools(session: MerchantSession) -> list:
             return _fail(str(exc))
 
         items = [_slim(p) for p in products]
+        session.seen_ids.update(item["productId"] for item in items)
+        session.seen_ids.update(
+            item["categoryId"] for item in items if item.get("categoryId")
+        )
 
         if search:
             needle = search.lower()
@@ -218,6 +242,7 @@ def build_tools(session: MerchantSession) -> list:
             quantity=quantity,
             is_meal=as_meal,
         )
+        session.seen_ids.update({line.product_id, line.line_id})
         return {"ok": True, "added": line.to_view(), "basket": session.cart.to_view()}
 
     @tool
@@ -249,25 +274,26 @@ def build_tools(session: MerchantSession) -> list:
     # ----------------------------------------------------------------------- #
     # Quoting — the artifact the other agent checks against its budget
     # ----------------------------------------------------------------------- #
-    @tool
-    async def send_quote(note: str = "") -> dict:
-        """Hand the customer's agent a priced quote for the current basket.
+    def _basket_signature() -> tuple:
+        """The basket reduced to what a quote is a statement about."""
+        return tuple(
+            (line.product_id, line.quantity, line.is_meal) for line in session.cart.lines
+        )
 
-        Send one before asking anyone to commit. This is an *estimate*: the
-        restaurant re-prices at checkout, so `confirm_order` is what produces
-        the firm figure. Tax is included here at the going rate, because the
-        other agent is deciding against a budget and a subtotal alone would let
-        it agree to something it cannot afford.
+    async def _quote_now(note: str = "", force: bool = False) -> dict | None:
+        """Price the basket and send the artifact. The tool and the unasked
+        quote both go through here, so there is one quote in this package and
+        not two that can drift.
 
-        Args:
-            note: Anything the other agent should know — a substitution you
-                made, an item that was unavailable.
-
-        Returns:
-            The quote as it was sent.
+        Unforced it is a no-op unless there is something new to say: an empty
+        basket, a confirmed order, or a basket the buyer has already been quoted
+        all return None.
         """
         if not session.cart.lines:
-            return _fail("The basket is empty — there is nothing to quote.")
+            return None
+        signature = _basket_signature()
+        if not force and (session.order or signature == session.last_quoted):
+            return None
 
         rate = await _tax_rate(session)
         subtotal = session.cart.subtotal
@@ -277,9 +303,13 @@ def build_tools(session: MerchantSession) -> list:
             "kind": "estimate",
             "currency": "PKR",
             "lines": [
+                # No lineId and no productId, matching the firm quote below.
+                # They are the restaurant's plumbing: the buyer has no tool that
+                # takes one, and an id it is shown is an id it writes back into
+                # its next sentence, where it reaches the transcript with the
+                # buyer's name against it. Not sending one is the only fix that
+                # holds without a model's cooperation.
                 {
-                    "lineId": line.line_id,
-                    "productId": line.product_id,
                     "name": line.name,
                     "quantity": line.quantity,
                     "unitPrice": _amount(line.unit_price),
@@ -302,9 +332,33 @@ def build_tools(session: MerchantSession) -> list:
 
         artifact = session.task.add_artifact(Artifact(name=QUOTE, data=data))
         session.task.stream.emit(event_artifact(artifact))
+        session.last_quoted = signature
+        return data
+
+    session.quote_unasked = _quote_now
+
+    @tool
+    async def send_quote(note: str = "") -> dict:
+        """Hand the customer's agent a priced quote for the current basket.
+
+        Send one before asking anyone to commit. This is an *estimate*: the
+        restaurant re-prices at checkout, so `confirm_order` is what produces
+        the firm figure. Tax is included here at the going rate, because the
+        other agent is deciding against a budget and a subtotal alone would let
+        it agree to something it cannot afford.
+
+        Args:
+            note: Anything the other agent should know — a substitution you
+                made, an item that was unavailable.
+
+        Returns:
+            The quote as it was sent.
+        """
+        if not session.cart.lines:
+            return _fail("The basket is empty — there is nothing to quote.")
+
+        data = await _quote_now(note, force=True)
         return {
-            "ok": True,
-            "quoteSent": True,
             "subtotal": data["subtotal"]["text"],
             "estimatedTotal": data["estimatedTotal"]["text"],
         }
@@ -477,6 +531,12 @@ def build_tools(session: MerchantSession) -> list:
                 "amountDue": summary.get("amountDue") or summary["total"],
             }
         )
+        # Never the order *number*, which is the one identifier here that is
+        # the customer's to hear. Some restaurants number and id an order the
+        # same, and redaction cannot tell the two apart once they are in a
+        # sentence — so a matching pair is simply not collected.
+        if str(placed["orderId"]) != str(placed["orderNumber"]):
+            session.seen_ids.add(str(placed["orderId"]))
 
         data = {
             "kind": "firm",
@@ -582,12 +642,24 @@ def build_tools(session: MerchantSession) -> list:
         handover = await a2a_delivery.hand_over(session.order, session.task.buyer_id)
         if handover is not None:
             paid_result["delivery"] = handover
-            paid_result["next"] = (
-                "The order is paid and the delivery agent has it — say so, and say "
-                "it is not delivered yet."
-                if handover.get("ok")
-                else f"The order is paid. {handover.get('error')} Report both halves plainly."
-            )
+            if not handover.get("ok"):
+                paid_result["next"] = (
+                    f"The order is paid. {handover.get('error')} Report both halves plainly."
+                )
+            elif not handover.get("arranged", True):
+                # Three outcomes, not two. A delivery nobody asked for is not a
+                # failed delivery, and reporting it as one would have the
+                # merchant apologising for a courier it was never meant to call.
+                paid_result["next"] = (
+                    "The order is paid and is for collection — no delivery was "
+                    "asked for, so no courier has it. Say that plainly, and do "
+                    "not offer to arrange one: there is no tool here that can."
+                )
+            else:
+                paid_result["next"] = (
+                    "The order is paid and the delivery agent has it — say so, and "
+                    "say it is not delivered yet."
+                )
 
         return paid_result
 

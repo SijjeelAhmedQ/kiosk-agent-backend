@@ -156,6 +156,11 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
             return _fail(str(exc))
 
         products = screen.get("products", [])
+        session.seen_ids.update(
+            str(p["id"]) for p in products if isinstance(p, dict) and p.get("id")
+        )
+        if category_id:
+            session.seen_ids.add(str(category_id))
         return {"ok": True, "matched": len(products), "products": products}
 
     @tool
@@ -183,6 +188,7 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
             return _fail(f"{exc} Call browse_menu to bring the card on screen first.")
 
         session.order["basketTotal"] = _money(added.get("basketTotal"))
+        session.seen_ids.add(str(product_id))
         return {"ok": True, "added": added, "basketTotal": rupees(session.order["basketTotal"])}
 
     @tool
@@ -201,23 +207,21 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
             session.order["basketTotal"] = total
         return {"ok": True, "basketTotal": rupees(total), "screen": screen}
 
-    @tool
-    async def send_quote(note: str = "") -> dict:
-        """Hand the customer's agent a quote for what is in the basket.
+    async def _quote_now(note: str = "", force: bool = False) -> dict | None:
+        """Send the basket total as a quote. The tool and the unasked quote both
+        come through here — same split as the API toolset, for the same reason.
 
-        Send one before asking anyone to commit. The basket total on the menu
-        screen excludes tax — the firm figure appears at checkout — so this is
-        explicitly an estimate.
-
-        Args:
-            note: Anything the other agent should know, such as a substitution.
-
-        Returns:
-            The quote as it was sent.
+        Unforced it says nothing unless there is something new to say: no
+        basket, an order already confirmed, or a total the buyer has been quoted
+        already all return None.
         """
         total = session.order.get("basketTotal", 0.0)
         if not total:
-            return _fail("The basket is empty — there is nothing to quote.")
+            return None
+        if not force and (
+            session.order.get("amountDue") is not None or total == session.last_quoted
+        ):
+            return None
 
         data = {
             "kind": "estimate",
@@ -232,6 +236,29 @@ def build_browser_tools(session: MerchantSession, headless: bool = False) -> lis
         }
         artifact = session.task.add_artifact(Artifact(name=QUOTE, data=data))
         session.task.stream.emit(event_artifact(artifact))
+        session.last_quoted = total
+        return data
+
+    session.quote_unasked = _quote_now
+
+    @tool
+    async def send_quote(note: str = "") -> dict:
+        """Hand the customer's agent a quote for what is in the basket.
+
+        Send one before asking anyone to commit. The basket total on the menu
+        screen excludes tax — the firm figure appears at checkout — so this is
+        explicitly an estimate.
+
+        Args:
+            note: Anything the other agent should know, such as a substitution.
+
+        Returns:
+            The quote as it was sent.
+        """
+        if not session.order.get("basketTotal", 0.0):
+            return _fail("The basket is empty — there is nothing to quote.")
+
+        data = await _quote_now(note, force=True)
         return {"ok": True, "quoteSent": True, "subtotal": data["subtotal"]["text"]}
 
     @tool

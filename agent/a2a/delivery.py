@@ -57,6 +57,34 @@ def _drop_for(buyer_id: str | None) -> location.UserLocation:
     return getattr(run, "drop", None) or location.saved()
 
 
+def _requested(buyer_id: str | None) -> bool:
+    """Did this errand ask for the order to be delivered at all?
+
+    The gate that has to come before the drop is looked up, because
+    `location.saved()` never returns nothing: ask it where to deliver and it
+    always answers with the machine owner's address. So a handover that only
+    ever asked "where" could not tell "bring it to my flat" apart from "nobody
+    said anything about delivery", and the second one was silently being treated
+    as the first — an order bought with no destination chosen went to the
+    courier anyway, addressed to whoever this laptop belongs to.
+
+    Either half of the console's delivery question counts as asking. A drop is
+    the operator naming a destination, and the "Where it goes" switch is the
+    customer saying bring it to me; the switch on its own is a request against
+    the saved address, which is exactly what that address is for.
+
+    Neither, or no run at all, is not a request. That includes a stranger's
+    agent, which is the case worth being explicit about: it has named no address
+    and thrown no switch, and the saved one belongs to somebody it has never
+    met. An order it bought is a take-away order waiting to be collected, which
+    is the honest reading of a negotiation in which delivery never came up.
+    """
+    run = store.console_runs.get(buyer_id) if buyer_id else None
+    if run is None:
+        return False
+    return bool(getattr(run, "drop", None)) or bool(getattr(run, "where_it_goes", False))
+
+
 def _consent_for(buyer_id: str | None) -> bool:
     """Did the customer behind this conversation ask for it to be delivered?
 
@@ -95,6 +123,23 @@ async def hand_over(
     if not number or order.get("orderType") != "take_away":
         return None
 
+    # Nobody asked for this to be delivered. Not an error and not silence: the
+    # merchant's brief tells it a paid take-away order goes to the courier by
+    # itself, so saying nothing here is how it ends up describing a delivery
+    # that was never arranged. This is the third answer — bought, and waiting to
+    # be collected.
+    if not _requested(buyer_id):
+        return {
+            "ok": True,
+            "arranged": False,
+            "note": (
+                "No delivery was asked for on this errand — no address was given "
+                "and nobody asked for it to be brought to them. The order is "
+                "bought and is waiting to be collected. No courier has it and "
+                "none was called."
+            ),
+        }
+
     deliver_to = _drop_for(buyer_id)
     where_it_goes = _consent_for(buyer_id)
 
@@ -126,6 +171,9 @@ async def hand_over(
 
     return {
         "ok": True,
+        # Told apart from the "nobody asked" answer above, which is also ok:
+        # both are successful outcomes and only one of them has a courier in it.
+        "arranged": True,
         "deliveryService": provider.display_name,
         "jobId": job.job_id,
         "status": job.status,

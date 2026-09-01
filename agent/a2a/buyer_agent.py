@@ -16,9 +16,12 @@ money moving.
 
 from __future__ import annotations
 
+import re
+
 from strands import Agent
 
 from agent.a2a.buyer_tools import BuyerSession, build_tools
+from agent.a2a.claims import denied_near
 from agent.a2a.config import a2a_settings
 from agent.a2a.merchant_client import MerchantConnection
 from agent.a2a.models import MissingApiKey, build_model, credentials_ready
@@ -41,6 +44,120 @@ def _errand(payload) -> str:
         f"{payload.instruction.strip()}\n\n"
         "Start by reading the merchant's card, then negotiate the order. "
         "Verify the order with the restaurant before you report back."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Keeping the buyer's report true
+# --------------------------------------------------------------------------- #
+# The merchant's words are checked against its basket before they are sent. This
+# is the same check on the other side, and it guards the more dangerous sentence
+# of the two: the merchant lying reaches one agent, which has tools to find out.
+# The buyer's report reaches a person, who has nothing to check it against and
+# every reason to believe it.
+#
+# Observed on llama.cpp with qwen3-4b-instruct-2507: three tool calls — discover,
+# talk, talk — and then "The order was confirmed and payment authorized. The
+# receipt shows Rs 609.50. After verifying with the restaurant's records, the
+# order matches." No order was placed, nothing was charged, and `verify_order`
+# was never called.
+
+#: "payment was authorized", "I paid", "the receipt shows", "Rs 609.50 was
+#: charged". Deliberately broad: this only ever runs when the wallet says
+#: nothing was spent, so the cost of matching too much is one wasted turn and
+#: the cost of matching too little is an operator told they bought dinner.
+_CLAIMS_PAID = re.compile(
+    r"\bpayment\s+(?:was\s+|is\s+)?(?:authoris|authoriz)ed\b"
+    r"|\b(?:authoris|authoriz)ed\s+(?:the\s+)?payment\b"
+    r"|\bwas\s+paid\b|\bi\s+paid\b|\bpaid\s+for\s+it\b"
+    r"|\b(?:was\s+|were\s+)?charged\b"
+    r"|\breceipt\s+(?:shows|says|confirms)\b",
+    re.IGNORECASE,
+)
+
+#: "the order was confirmed", "order number 495".
+_CLAIMS_ORDER_PLACED = re.compile(
+    r"\border\s+(?:was\s+|has\s+been\s+)?(?:confirmed|placed)\b"
+    r"|\bconfirmed\s+the\s+order\b"
+    r"|\border\s+number\s+\S+",
+    re.IGNORECASE,
+)
+
+#: "I verified with the restaurant", "the records match the receipt".
+_CLAIMS_VERIFIED = re.compile(
+    r"\bverif(?:ied|ying)\b[^.!?]{0,60}\b(?:restaurant|record|order)\b"
+    r"|\brecords?\b[^.!?]{0,40}\bmatch(?:es|ed)?\b",
+    re.IGNORECASE,
+)
+
+_CORRECT_REPORT = (
+    "Stop. Do not write that report — every load-bearing sentence in it is "
+    "false, and it is about to be read by the person who sent you out.\n\n"
+    "What your wallet and your tools actually say happened: {facts}\n\n"
+    "You described steps you never took. Saying a thing is not doing it, and "
+    "the tools are the only record of what was done. If you still want to "
+    "finish the errand, take the steps for real, one call at a time, waiting "
+    "for each result: `talk_to_merchant` to ask it to confirm the order, then "
+    "`authorize_payment`, then `verify_order`. If you cannot finish it, say so "
+    "plainly and say what stopped you. Either way the next thing you write must "
+    "describe only what the tools returned."
+)
+
+
+def _facts(session: BuyerSession) -> str:
+    """What actually happened, in the words the report should have used."""
+    from agent.wallet import rupees
+
+    parts = []
+    order = session.receipt.get("orderNumber") or session.firm_quote.get("orderNumber")
+    parts.append(f"order {order} is on the restaurant's books" if order else "no order exists")
+    parts.append(
+        f"{rupees(session.wallet.spent)} has been charged"
+        if session.paid
+        else "nothing has been paid"
+    )
+    if not session.receipt:
+        parts.append("no receipt was ever sent")
+    return "; ".join(parts) + "."
+
+
+def _unbacked_report(said: str, session: BuyerSession) -> str | None:
+    """A correction for a report that describes an errand that did not happen.
+
+    Bounded at one, like the merchant's. A model that invents a receipt once
+    will usually take the steps when told the record disagrees; one that invents
+    a second time is handled below, where the facts stop being negotiable.
+    """
+    text = (said or "").strip()
+    if not text:
+        return None
+
+    for pattern, untrue in (
+        (_CLAIMS_PAID, not session.paid),
+        (_CLAIMS_ORDER_PLACED, not session.firm_quote and not session.receipt),
+        (_CLAIMS_VERIFIED, not session.verified),
+    ):
+        match = pattern.search(text)
+        if untrue and match and not denied_near(text, match):
+            return _CORRECT_REPORT.format(facts=_facts(session))
+    return None
+
+
+def _truthful(said: str, session: BuyerSession) -> str:
+    """The report, with the record put in front of it if it still disagrees.
+
+    The last line of defence, and the one that does not ask the model for
+    anything. A corrected agent that goes back and pays leaves this a no-op; an
+    agent that writes the same invented receipt twice gets its report kept —
+    losing it would hide whatever true detail is in there — under a heading that
+    says which parts of it the tools do not support. An operator reading "paid"
+    when nothing was paid is the one outcome this whole file exists to prevent.
+    """
+    if not said or not _unbacked_report(said, session):
+        return said
+    return (
+        "[the agent's report below claims steps its tools never took — "
+        f"what actually happened: {_facts(session)}]\n\n{said}"
     )
 
 
@@ -86,7 +203,15 @@ async def run_errand(run: ConsoleRun, payload) -> None:
         )
 
         said = await run_turn(agent, _errand(payload), "buyer", run.stream)
-        run.final_text = said or _fallback_report(session)
+
+        # One chance to make the report true, on the same terms as the
+        # merchant's: a claim the session does not back buys the agent one more
+        # turn to go and make it so.
+        correction = _unbacked_report(said, session)
+        if correction:
+            said = await run_turn(agent, correction, "buyer", run.stream) or said
+
+        run.final_text = _truthful(said, session) or _fallback_report(session)
         run.merchant_task_id = session.merchant.task_id
         run.status = "done"
         run.stream.emit(
