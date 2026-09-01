@@ -119,14 +119,15 @@ def main() -> int:
     # own message, which names the address and the command.
     from agent.llm import llamacpp_launcher
 
-    llamacpp_launcher.ensure(lambda line: print(f"{DIM}  {line}{RESET}"))
+    # No warm-up here: the errand below is the first request either way, and on
+    # a one-slot server a sample errand in front of it is a wait, not a saving.
+    llamacpp_launcher.ensure(lambda line: print(f"{DIM}  {line}{RESET}"), warm=False)
 
     # Imported here so a missing API key is reported after the cheaper checks.
-    from agent.friends_kitchen_agent import MissingApiKey, build_agent
+    from agent.friends_kitchen_agent import MissingApiKey, build_agent, errand_message
 
     try:
         agent = build_agent(
-            wallet,
             mode=args.mode,
             callback_handler=None if args.quiet else make_printer(),
         )
@@ -140,7 +141,9 @@ def main() -> int:
     print(f"{DIM}  mode   : {args.mode} ({settings.model_id}){RESET}\n")
 
     try:
-        result = agent(args.instruction)
+        # The errand — steps, coupon, cash limit — is the message rather than
+        # the system prompt. See agent/prompts.py.
+        result = agent(errand_message(args.instruction, wallet))
     except KeyboardInterrupt:
         print(f"\n{RED}Stopped. Any order already paid for still stands.{RESET}")
         return 130

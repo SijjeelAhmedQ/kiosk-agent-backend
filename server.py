@@ -18,6 +18,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import logging
 import re
 import uuid
 from contextlib import suppress
@@ -32,6 +33,7 @@ from sse_starlette.sse import EventSourceResponse
 from agent import branches, console, friends_kitchen_api, location, telemetry
 from agent.llm import api as llm_api
 from agent.llm import llm
+from agent.llm import warmup as _llm_warmup
 from agent.config import settings
 from agent.delivery import registry as delivery_registry
 from agent.location import InvalidLocation
@@ -78,6 +80,16 @@ console.mount(app, "/api/agent")
 # one particular service happened to be up would be the wrong place to fix a
 # configuration problem. See `agent/llm/api.py`.
 llm_api.mount(app, "/api/llm")
+
+# Read the errand-independent half of the prompt into the local runtime now,
+# while nobody is waiting for it. Here rather than in a startup hook for the
+# same reason as the two above, and on a background thread so an unreachable or
+# unselected llama.cpp costs this import nothing: the whole thing is a no-op
+# unless llama.cpp is what is selected and it is already answering. What it buys
+# is the first errand of the session, which otherwise spends some forty seconds
+# reading ~2,000 tokens of brief and tool schemas before its first tool call.
+# See agent/llm/warmup.py.
+_llm_warmup.warm_in_background(logging.getLogger("agent.ordering").info)
 
 
 # One errand at a time — see the module docstring.
@@ -299,7 +311,7 @@ async def _drive(run: Run, payload: StartRunIn) -> None:
         location.reset()
 
         try:
-            from agent.friends_kitchen_agent import build_agent
+            from agent.friends_kitchen_agent import build_agent, errand_message
 
             # Validated at the edge, before the model sees anything. A bad fix
             # becomes a failed run with a sentence, rather than an order placed
@@ -324,11 +336,16 @@ async def _drive(run: Run, payload: StartRunIn) -> None:
                 )
 
             agent = build_agent(
-                wallet,
                 mode=payload.mode,
                 callback_handler=None,
                 deliver_to=user_location,
             )
+            # The errand itself — steps, coupon, cash limit, where the food is
+            # going — is the first message rather than the system prompt, so
+            # that the prompt behind the tool schemas is the same every run and
+            # the local runtime can re-use what it has already read of it. See
+            # agent/prompts.py.
+            errand = errand_message(payload.instruction, wallet, deliver_to=user_location)
 
             if payload.mode == "browser":
                 # Launch before the model starts so a failure here is reported
@@ -340,7 +357,7 @@ async def _drive(run: Run, payload: StartRunIn) -> None:
 
             announced: set[str] = set()
 
-            async for event in agent.stream_async(payload.instruction):
+            async for event in agent.stream_async(errand):
                 tool_use = event.get("current_tool_use") or {}
                 tool_id = tool_use.get("toolUseId")
                 if tool_id and tool_id not in announced and tool_use.get("name"):

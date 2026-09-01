@@ -169,7 +169,8 @@ def add_to_cart(product_id: str, quantity: int = 1, as_meal: bool = False) -> di
             Only valid when the product's isMealEligible is true.
 
     Returns:
-        The cart after the addition.
+        The cart after the addition — the whole cart, so there is nothing to
+        confirm with view_cart afterwards.
     """
     if quantity < 1:
         return _fail("Quantity must be at least 1.")
@@ -201,6 +202,10 @@ def add_to_cart(product_id: str, quantity: int = 1, as_meal: bool = False) -> di
 @tool
 def view_cart() -> dict:
     """Show what is in the cart right now, with an estimated subtotal.
+
+    Only worth calling if you have lost track of what is in there: add_to_cart
+    and remove_from_cart both hand back the whole cart already, so calling this
+    straight after one of them tells you nothing new.
 
     Returns:
         The cart lines, item count and estimated subtotal in rupees.
@@ -274,7 +279,8 @@ def check_coupon() -> dict:
 @tool
 def place_order(order_type: str = "take_away", payment_method: str = "card") -> dict:
     """Send the cart to the kitchen. This creates the order but does not pay for
-    it — the coupon goes on next, then payment.
+    it — payment is the next step, with the coupon, if this errand carries one,
+    going on first. The result says which.
 
     Args:
         order_type: "dine_in" or "take_away".
@@ -329,7 +335,16 @@ def place_order(order_type: str = "take_away", payment_method: str = "card") -> 
         "tax": rupees(summary["tax"]),
         "total": rupees(summary["total"]),
         "amountDue": rupees(_order["amountDue"]),
-        "next": "Apply the coupon with apply_coupon, then call authorize_payment.",
+        # Only named when there is one to apply. This hint is read as an
+        # instruction, so an errand carrying no coupon was being sent to
+        # apply_coupon for a guaranteed failure between the order and the
+        # payment — harmless, but it is a wasted call and it shows up in the
+        # agent's report to the customer.
+        "next": (
+            "Apply the coupon with apply_coupon, then call authorize_payment."
+            if wallet.coupon_code
+            else "There is no coupon on this errand — call authorize_payment."
+        ),
     }
 
     # Said here, where the order type was chosen, because it is the last moment

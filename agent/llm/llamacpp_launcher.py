@@ -101,6 +101,7 @@ def ensure(
     log: Callable[[str], None] = _quiet,
     *,
     timeout: float | None = None,
+    warm: bool = True,
 ) -> str:
     """Make sure llama.cpp is up, if llama.cpp is what we are running on.
 
@@ -109,6 +110,11 @@ def ensure(
     Never raises: every way this can fail ends in the provider's own
     "not reachable" message a few lines later, and that sentence is clearer
     than anything this could throw.
+
+    `warm=False` for a caller whose very next act is an errand — the CLI. There
+    the errand *is* the warm-up, and reading a sample one first only puts a
+    request in front of it: one slot means the two queue rather than overlap.
+    A service that will sit idle until somebody presses Run wants the default.
     """
     if not settings.llamacpp_autostart:
         return "disabled"
@@ -117,6 +123,8 @@ def ensure(
 
     adapter = LlamaCppProvider()
     if reachable(adapter):
+        if warm:
+            _warm(log)
         return "running"
 
     if os.name != "nt":
@@ -138,7 +146,26 @@ def ensure(
         log(f"could not start llama-server: {exc}")
         return "failed"
 
-    return "started" if _await_load(adapter, log, timeout) else "failed"
+    if not _await_load(adapter, log, timeout):
+        return "failed"
+    if warm:
+        _warm(log)
+    return "started"
+
+
+def _warm(log: Callable[[str], None]) -> None:
+    """Read the errand-independent half of the prompt into the server's slot.
+
+    On a thread, because this is not something a caller should wait for: the
+    server has one slot, so an errand that starts while the warm-up is in
+    flight queues behind it and then re-uses what it read. What the thread is
+    for is the case that pays — a dashboard that comes up minutes before
+    anybody presses Run, with the ~2,000 tokens every errand opens with already
+    behind it. See agent/llm/warmup.py.
+    """
+    from agent.llm import warmup
+
+    warmup.warm_in_background(log)
 
 
 def _spawn() -> None:

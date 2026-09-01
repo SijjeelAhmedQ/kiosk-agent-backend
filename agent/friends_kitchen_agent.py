@@ -19,6 +19,7 @@ from agent.config import settings
 from agent.llm import MissingApiKey as _MissingApiKey
 from agent.llm import llm
 from agent.location import UserLocation
+from agent.prompts import errand_message as _errand_message
 from agent.prompts import system_prompt
 from agent.reasoning import DropReasoningContent
 from agent.skills import equip
@@ -57,25 +58,20 @@ def _model():
     return llm.build_model(max_tokens=settings.max_tokens, effort=settings.effort)
 
 
-def build_agent(
-    wallet: Wallet,
-    mode: str = "api",
-    callback_handler=None,
-    deliver_to: UserLocation | None = None,
-) -> Agent:
-    """Wire up an agent for one errand.
+def toolset(mode: str = "api", delivery: bool = False) -> list:
+    """The tools an errand of this shape gets, before skills are equipped.
+
+    Split out of `build_agent` because the warm-up needs the same list: what
+    llama-server caches is the rendered prompt, and the tool schemas are most
+    of it, so priming it with a different toolset would prime nothing. One
+    function, two callers, no chance of the two drifting apart.
 
     Args:
-        wallet: The coupon and cash ceiling this run is allowed to use.
         mode: "api" to order through the REST API, "browser" to drive the
             actual website in Chromium.
-        callback_handler: Strands streaming callback; None silences the
-            built-in printer so the CLI can render its own output.
-        deliver_to: Where the customer is, when the errand is a delivery. None
-            is a counter order and builds exactly the agent this function built
-            before delivery existed — same tools, same brief. The delivery
-            tools are added only when there is somewhere to deliver to, because
-            a tool an errand cannot use is a tool it can waste a step on.
+        delivery: Whether this errand has somewhere to deliver to. The delivery
+            tools are added only then, because a tool an errand cannot use is a
+            tool it can waste a step on.
     """
     if mode == "browser":
         from agent.tools.browser_tools import BROWSER_TOOLS
@@ -88,20 +84,67 @@ def build_agent(
     else:
         raise ValueError(f"Unknown mode {mode!r} — expected 'api' or 'browser'.")
 
-    service = "the delivery service"
-    if deliver_to is not None:
-        from agent.delivery import registry
+    if delivery:
         from agent.tools.delivery_tools import DELIVERY_TOOLS
 
         tools += DELIVERY_TOOLS
+    return tools
+
+
+def errand_message(
+    instruction: str,
+    wallet: Wallet,
+    deliver_to: UserLocation | None = None,
+) -> str:
+    """What to send the agent built by `build_agent` for the same errand.
+
+    The coupon, the cash limit, the numbered steps and the delivery note all
+    live here rather than in the system prompt — see agent/prompts.py for why —
+    so the two are a pair: build the agent with one, and ask it with this.
+
+    Args:
+        instruction: What to order, in the words it was asked in.
+        wallet: The coupon and cash ceiling this run is allowed to use.
+        deliver_to: Where the customer is, or None for a counter order.
+    """
+    service = "the delivery service"
+    if deliver_to is not None:
+        from agent.delivery import registry
+
         service = registry.get().display_name
 
-    prompt = system_prompt(
+    return _errand_message(
+        instruction,
         wallet,
-        browser_mode=(mode == "browser"),
         delivery_to=deliver_to.display() if deliver_to else None,
         delivery_service=service,
     )
+
+
+def build_agent(
+    mode: str = "api",
+    callback_handler=None,
+    deliver_to: UserLocation | None = None,
+) -> Agent:
+    """Wire up an agent for one errand.
+
+    It no longer takes the wallet. The coupon and the cash limit reach the
+    agent through `errand_message`, which is the message this agent is then
+    asked — the two are a pair, and agent/prompts.py says why they are split.
+
+    Args:
+        mode: "api" to order through the REST API, "browser" to drive the
+            actual website in Chromium.
+        callback_handler: Strands streaming callback; None silences the
+            built-in printer so the CLI can render its own output.
+        deliver_to: Where the customer is, when the errand is a delivery. None
+            is a counter order and builds exactly the agent this function built
+            before delivery existed — same tools, same brief. Only the toolset
+            depends on it here; where the customer actually is travels in the
+            errand message.
+    """
+    tools = toolset(mode, delivery=deliver_to is not None)
+    prompt = system_prompt(browser_mode=(mode == "browser"))
 
     # Skills last, so the brief ends with the library the agent may reach for.
     # Additive and safe when `skills/` is empty: with nothing installed this

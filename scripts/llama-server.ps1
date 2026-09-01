@@ -110,6 +110,32 @@ param(
     # fit beside the weights.
     [string]$FlashAttn,
 
+    # How many prompt tokens are handed to the backend at once (-b) and how
+    # many of those are computed in one pass (-ub). The two knobs that decide
+    # how long the first answer of an errand takes: the brief and the tool
+    # schemas are ~3,200 tokens, and every one of them is read before the model
+    # writes a character.
+    #
+    # -ub is the one that costs VRAM. Its scratch buffer sits beside the
+    # weights, so a bigger physical batch is a faster prefill bought with
+    # layers that no longer fit on the card - at -ub 2048 on a 4 GB GTX 1650
+    # llama.cpp can only keep 11 of 36 layers there, against 25 at -ub 256, and
+    # what the prefill gains the generation gives straight back. 256 is a
+    # deliberate small default for that reason and not a conservative one.
+    [int]$Batch,
+    [int]$UBatch,
+
+    # Do the prompt's big matrix multiplies through cuBLAS rather than
+    # llama.cpp's own quantised kernels (GGML_CUDA_FORCE_CUBLAS=1).
+    #
+    # Those kernels are written for the int8 tensor cores that a GTX 16xx does
+    # not have, and without them the card prefills at about the speed of the
+    # CPU: measured here, 62 tokens/s against 126 through cuBLAS on the same
+    # 3,072-token prompt, with generation a shade faster too. On a card that
+    # does have tensor cores the reverse is true, which is why this is a switch
+    # rather than something set for everybody.
+    [switch]$ForceCublas,
+
     # llama-server.exe. Defaults to var/llamacpp, where .env says to unzip a
     # release; falls back to whatever is on PATH.
     [string]$Exe,
@@ -360,6 +386,11 @@ if (-not $PSBoundParameters.ContainsKey('Ngl')) { $Ngl = [int](Get-Setting @('LL
 if (-not $Parallel) { $Parallel = [int](Get-Setting @('LLAMACPP_PARALLEL') '1') }
 if (-not $CacheType) { $CacheType = Get-Setting @('LLAMACPP_CACHE_TYPE') 'q8_0' }
 if (-not $FlashAttn) { $FlashAttn = Get-Setting @('LLAMACPP_FLASH_ATTN') 'on' }
+if (-not $Batch) { $Batch = [int](Get-Setting @('LLAMACPP_BATCH') '2048') }
+if (-not $UBatch) { $UBatch = [int](Get-Setting @('LLAMACPP_UBATCH') '256') }
+if (-not $ForceCublas) {
+    $ForceCublas = (Get-Setting @('LLAMACPP_FORCE_CUBLAS') 'false') -match '^(1|true|yes|on)$'
+}
 
 # A quantised V cache is only implemented on the flash-attention path. Setting
 # one without the other does not give a slower server: llama-server fails to
@@ -402,7 +433,9 @@ $arguments = @(
     '-np', $Parallel,
     '-ctk', $CacheType,
     '-ctv', $CacheType,
-    '-fa', $FlashAttn
+    '-fa', $FlashAttn,
+    '-b', $Batch,
+    '-ub', $UBatch
 )
 if (-not $NoJinja) { $arguments += '--jinja' }
 if ($NoThink) { $arguments += @('--reasoning-budget', '0') }
@@ -413,9 +446,11 @@ Write-Host "  llama.cpp   $(Split-Path -Leaf $Exe)"
 Write-Host "  model       $(Split-Path -Leaf $Gguf)  (as '$Alias')"
 Write-Host "  listening   http://localhost:$Port"
 Write-Host "  context     $Ctx tokens, $Ngl layers on the GPU"
+Write-Host "  batch       $Batch logical, $UBatch physical"
 Write-Host "  kv cache    $CacheType, flash attention $FlashAttn"
 Write-Host "  slots       $Parallel request(s) at a time"
 if ($NoThink) { Write-Host "  thinking    off (--reasoning-budget 0)" }
+if ($ForceCublas) { Write-Host "  matmul      cuBLAS (no int8 tensor cores on this card)" }
 Write-Host ""
 # The agents ask for a model by name, and the name they ask for is whatever the
 # LLM screen or .env says. Worth saying out loud when this server is about to
@@ -429,5 +464,9 @@ if ($envAlias -and $envAlias -ne $Alias) {
 Write-Host "  Leave this running. Then pick llama.cpp on the LLM Configuration"
 Write-Host "  screen, or set LLM_PROVIDER=llamacpp in .env."
 Write-Host ""
+
+# Read by the CUDA backend as it initialises, so it has to be in the
+# environment before the process starts rather than on its command line.
+if ($ForceCublas) { $env:GGML_CUDA_FORCE_CUBLAS = '1' }
 
 & $Exe @arguments

@@ -184,7 +184,7 @@ agent/
   location.py                Where the customer is. Validated, then held for the run.
   telemetry.py               OpenTelemetry, off unless FK_OTEL says otherwise
   branches.py                Which branch serves that location, and where a rider collects
-  prompts.py                 The brief the agent is given
+  prompts.py                 The brief the agent is given, and the errand it is asked
   friends_kitchen_agent.py             Strands Agent assembly (the brain comes from agent/llm)
   friends_kitchen_api.py               HTTP client for the Friends Kitchen API
   cart.py                    Client-side cart (the API has no cart endpoint)
@@ -193,6 +193,7 @@ agent/
     providers.py             One adapter per provider (OpenRouter, five local runtimes, and five more)
     service.py               What agents call: llm.build_model()
     api.py                   /api/llm/* — mounted by all four services
+    warmup.py                Reads the unchanging half of the prompt into llama.cpp before anyone waits on it
 scripts/
   llama-server.ps1           Starts llama.cpp's server on the settings in .env (-List for the models it can fetch)
   tools/
